@@ -10,14 +10,14 @@ type constant = Ast.constant
 type incdec = Ast.incdec
 
 type function_ = {
-    fn_name: string;
+  fn_name: string;
   fn_params: var list;
-     fn_typ: typ list;
+  fn_typ: typ list;
 }
 
 and structure = {
-          s_name: string;
-        s_fields: (string, field) Hashtbl.t;
+  s_name: string;
+  s_fields: (string, field) Hashtbl.t;
   (* TODO autres informations pour l'analyse semantique *)
 }
 
@@ -26,21 +26,21 @@ and typ =
   | Tstruct of structure
   | Tptr of typ
   | Tmany of typ list (* 0 ou >= 2 *)
-  (* TODO autres types pour l'analyse semantique *)
+(* TODO autres types pour l'analyse semantique *)
 
 and var = {
-          v_name: string;
-            v_id: int; (* unique *)
-           v_loc: Ast.location;
-           v_typ: typ;
+  v_name: string;
+  v_id: int; (* unique *)
+  v_loc: Ast.location;
+  v_typ: typ;
   mutable v_used: bool;
   mutable v_addr: bool; (* usage de &x *)
   (* TODO autres informations pour la production de code *)
 }
 
 and field = {
-         f_name: string;
-          f_typ: typ;
+  f_name: string;
+  f_typ: typ;
   mutable f_ofs: int; (* relatif à l'adresse de l'objet *)
 }
 

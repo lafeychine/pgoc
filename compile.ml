@@ -107,27 +107,27 @@ let rec expr env e = match e.expr_desc with
   | TEassign ([lv], [e1]) ->
     (* TODO code pour x1,... := e1,... *) assert false 
   | TEassign (_, _) ->
-     assert false
+    assert false
   | TEblock el ->
-     (* TODO code pour block *) assert false
+    (* TODO code pour block *) assert false
   | TEif (e1, e2, e3) ->
-     (* TODO code pour if *) assert false
+    (* TODO code pour if *) assert false
   | TEfor (e1, e2) ->
-     (* TODO code pour for *) assert false
+    (* TODO code pour for *) assert false
   | TEnew ty ->
-     (* TODO code pour new S *) assert false
+    (* TODO code pour new S *) assert false
   | TEcall (f, el) ->
-     (* TODO code pour appel fonction *) assert false
+    (* TODO code pour appel fonction *) assert false
   | TEdot (e1, {f_ofs=ofs}) ->
-     (* TODO code pour e.f *) assert false
+    (* TODO code pour e.f *) assert false
   | TEvars _ ->
-     assert false (* fait dans block *)
+    assert false (* fait dans block *)
   | TEreturn [] ->
     (* TODO code pour return e *) assert false
   | TEreturn [e1] ->
     (* TODO code pour return e1,... *) assert false
   | TEreturn _ ->
-     assert false
+    assert false
   | TEincdec (e1, op) ->
     (* TODO code pour return e++, e-- *) assert false
 
@@ -157,9 +157,9 @@ print_int:
         call    printf
         ret
 "; (* TODO print pour d'autres valeurs *)
-   (* TODO appel malloc de stdlib *)
+    (* TODO appel malloc de stdlib *)
     data =
       label "S_int" ++ string "%ld" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
-    ;
+  ;
   }

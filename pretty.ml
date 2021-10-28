@@ -32,7 +32,7 @@ let rec typ fmt = function
   | Tstring -> fprintf fmt "string"
   | Tstruct s -> fprintf fmt "%s" s.s_name
   | Tptr ty -> fprintf fmt "*%a" typ ty
-  (* TODO autres types utilises par l'analyse semantique *)
+(* TODO autres types utilises par l'analyse semantique *)
 
 let rec expr fmt e = match e.expr_desc with
   | TEskip -> fprintf fmt ";"
@@ -41,37 +41,37 @@ let rec expr fmt e = match e.expr_desc with
   | TEconstant (Cbool b) -> fprintf fmt "%b" b
   | TEconstant (Cstring s) -> fprintf fmt "%S" s
   | TEbinop (op, e1, e2) ->
-     fprintf fmt "@[(%a %s@ %a)@]" expr e1 (binop op) expr e2
+    fprintf fmt "@[(%a %s@ %a)@]" expr e1 (binop op) expr e2
   | TEunop (op, e1) ->
-     fprintf fmt "@[(%s@ %a)@]" (unop op) expr e1
+    fprintf fmt "@[(%s@ %a)@]" (unop op) expr e1
   | TEnew ty ->
-     fprintf fmt "new(%a)" typ ty
+    fprintf fmt "new(%a)" typ ty
   | TEcall (f, el) ->
-     fprintf fmt "%s(%a)" f.fn_name list el
+    fprintf fmt "%s(%a)" f.fn_name list el
   | TEident v ->
-     fprintf fmt "%s" v.v_name
+    fprintf fmt "%s" v.v_name
   | TEdot (e1, f) ->
-     fprintf fmt "%a.%s" expr e1 f.f_name
+    fprintf fmt "%a.%s" expr e1 f.f_name
   | TEassign ([], _) | TEassign (_, []) ->
-     assert false
+    assert false
   | TEassign ([lvl], [e]) ->
-     fprintf fmt "%a = %a" expr lvl expr e
+    fprintf fmt "%a = %a" expr lvl expr e
   | TEassign (lvl, el) ->
-     fprintf fmt "%a = %a" list lvl list el
+    fprintf fmt "%a = %a" list lvl list el
   | TEif (e1, e2, e3) ->
-     fprintf fmt "if %a@ %a@ %a" expr e1 expr e2 expr e3
+    fprintf fmt "if %a@ %a@ %a" expr e1 expr e2 expr e3
   | TEreturn el ->
-     fprintf fmt "return %a" list el
+    fprintf fmt "return %a" list el
   | TEblock bl ->
-     block fmt bl
+    block fmt bl
   | TEfor (e1, e2) ->
-     fprintf fmt "for %a %a" expr e1 expr e2
+    fprintf fmt "for %a %a" expr e1 expr e2
   | TEprint el ->
-     fprintf fmt "fmt.Print(%a)" list el
+    fprintf fmt "fmt.Print(%a)" list el
   | TEincdec (e1, op) ->
-     fprintf fmt "%a%s" expr e1 (match op with Inc -> "++" | Dec -> "--")
+    fprintf fmt "%a%s" expr e1 (match op with Inc -> "++" | Dec -> "--")
   | TEvars vl ->
-     fprintf fmt "var %a" (print_list comma var) vl
+    fprintf fmt "var %a" (print_list comma var) vl
 
 and var fmt v =
   fprintf fmt "%s" v.v_name
@@ -84,10 +84,10 @@ and list fmt el =
 
 let decl fmt = function
   | TDfunction (f, e) ->
-     fprintf fmt "@[<hov 2>func %s(%a) %a@]@\n@\n"
-       f.fn_name (print_list comma var) f.fn_params expr e
+    fprintf fmt "@[<hov 2>func %s(%a) %a@]@\n@\n"
+      f.fn_name (print_list comma var) f.fn_params expr e
   | TDstruct s ->
-     fprintf fmt "type %s struct { ... }@\n" s.s_name
+    fprintf fmt "type %s struct { ... }@\n" s.s_name
 
 let file fmt dl =
   fprintf fmt "---------@\n";
