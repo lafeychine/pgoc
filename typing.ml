@@ -12,7 +12,8 @@ exception Error of Ast.location * string
 
 let error loc e = raise (Error (loc, e))
 
-(* TODO environnement pour les types structure *)
+(* NOTE Environnement pour les types structure *)
+let contexte_structures = Hashtbl.create 0
 
 (* TODO environnement pour les fonctions *)
 
@@ -29,9 +30,6 @@ let rec eq_type ty1 ty2 = match ty1, ty2 with
   | Tptr ty1, Tptr ty2 -> eq_type ty1 ty2
   | _ -> false
 (* TODO autres types *)
-
-let fmt_used = ref false
-let fmt_imported = ref false
 
 let evar v = { expr_desc = TEident v; expr_typ = v.v_typ }
 
@@ -115,12 +113,22 @@ and expr_desc env loc = function
   | PEvars _ ->
     (* TODO *) assert false 
 
+
 let found_main = ref false
+let fmt_used = ref false
+
 
 (* 1. declare structures *)
 let phase1 = function
-  | PDstruct { ps_name = { id = id; loc = loc }} -> (* TODO *) ()
-  | PDfunction _ -> ()
+  | PDstruct { ps_name = { id; loc } } ->
+    (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
+    (*      En vérifiant l'unicité des noms de structures *)
+    if Hashtbl.find_opt contexte_structures id <> None then
+      error loc (Printf.sprintf "%s redeclared in this block" id);
+
+    Hashtbl.add contexte_structures id (Tstruct { s_name = id; s_fields = Hashtbl.create 0 })
+
+  | _ -> ()
 
 let sizeof = function
   | Tint | Tbool | Tstring | Tptr _ -> 8
@@ -128,31 +136,30 @@ let sizeof = function
 
 (* 2. declare functions and type fields *)
 let phase2 = function
-  | PDfunction { pf_name={id; loc}; pf_params=pl; pf_typ=tyl; } ->
+  | PDfunction { pf_name={ id; loc }; pf_params=pl; pf_typ=tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
     if id = "main" then (
       if pl <> [] || tyl <> [] then
         error loc "func main must have no arguments and no return values";
       found_main := true; )
 
-
-  | PDstruct { ps_name = {id}; ps_fields = fl } ->
+  | PDstruct { ps_name = { id }; ps_fields = fl } ->
     (* TODO *) ()
 
 (* 3. type check function bodies *)
 let decl = function
   | PDfunction { pf_name={id; loc}; pf_body = e; pf_typ=tyl } ->
     (* TODO check name and type *)
-    let f = { fn_name = id; fn_params = []; fn_typ = []} in
+    let f = { fn_name = id; fn_params = []; fn_typ = [] } in
     let e, rt = expr Env.empty e in
     TDfunction (f, e)
+
   | PDstruct {ps_name={id}} ->
     (* TODO *) let s = { s_name = id; s_fields = Hashtbl.create 5 } in
     TDstruct s
 
 let file ~debug:b (imp, dl) =
   debug := b;
-  (* fmt_imported := imp; *)
   List.iter phase1 dl;
   List.iter phase2 dl;
   if not !found_main then error dummy_loc "missing method main";
