@@ -129,14 +129,20 @@ let sizeof = function
 (* 2. declare functions and type fields *)
 let phase2 = function
   | PDfunction { pf_name={id; loc}; pf_params=pl; pf_typ=tyl; } ->
-    (* TODO *) () 
+    (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
+    if id = "main" then (
+      if pl <> [] || tyl <> [] then
+        error loc "func main must have no arguments and no return values";
+      found_main := true; )
+
+
   | PDstruct { ps_name = {id}; ps_fields = fl } ->
-    (* TODO *) () 
+    (* TODO *) ()
 
 (* 3. type check function bodies *)
 let decl = function
   | PDfunction { pf_name={id; loc}; pf_body = e; pf_typ=tyl } ->
-    (* TODO check name and type *) 
+    (* TODO check name and type *)
     let f = { fn_name = id; fn_params = []; fn_typ = []} in
     let e, rt = expr Env.empty e in
     TDfunction (f, e)
