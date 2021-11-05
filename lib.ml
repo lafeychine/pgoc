@@ -25,3 +25,9 @@ let nothing fmt () = ()
 let comma fmt () = fprintf fmt ", "
 let newline fmt () = fprintf fmt "@\n"
 
+
+(* NOTE Vérification de l'unicité d'éléments dans une liste *)
+let rec find_opt_duplicate_item (f_eq: 'a -> 'a -> bool) (list: 'a list) =
+  match list with
+  | []      -> None
+  | x :: xs -> if List.exists (f_eq x) xs then Some x else find_opt_duplicate_item f_eq xs

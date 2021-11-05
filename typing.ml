@@ -12,17 +12,25 @@ exception Error of Ast.location * string
 
 let error loc e = raise (Error (loc, e))
 
-(* NOTE Environnement pour les types structure *)
-let contexte_structures = Hashtbl.create 0
+(* NOTE Créations des contextes *)
+let contexte_structures: (string, structure) Hashtbl.t = Hashtbl.create 0
+let contexte_functions: (string, function_) Hashtbl.t = Hashtbl.create 0
 
-(* TODO environnement pour les fonctions *)
 
-let rec type_type = function
-  | PTident { id = "int" } -> Tint
-  | PTident { id = "bool" } -> Tbool
-  | PTident { id = "string" } -> Tstring
-  | PTptr ty -> Tptr (type_type ty)
-  | _ -> error dummy_loc ("unknown struct ") (* TODO type structure *)
+(* NOTE Récupération, si existant, du type correspondant à la chaîne de caractère *)
+let rec type_opt = function
+  | PTident { id = "int" } -> Some Tint
+  | PTident { id = "bool" } -> Some Tbool
+  | PTident { id = "string" } -> Some Tstring
+
+  | PTident { id } -> ( match Hashtbl.find_opt contexte_structures id with
+      | Some struct_type -> Some (Tstruct struct_type)
+      | None             -> None )
+
+  | PTptr ty -> ( match type_opt ty with
+      | Some sub_type -> Some (Tptr sub_type)
+      | None         -> None )
+
 
 let rec eq_type ty1 ty2 = match ty1, ty2 with
   | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
@@ -121,18 +129,20 @@ let fmt_used = ref false
 (* 1. declare structures *)
 let phase1 = function
   | PDstruct { ps_name = { id; loc } } ->
-    (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
-    (*      En vérifiant l'unicité des noms de structures *)
+    (* NOTE Vérification de l'unicité des noms de structures *)
     if Hashtbl.find_opt contexte_structures id <> None then
-      error loc (Printf.sprintf "%s redeclared in this block" id);
+      error loc (Printf.sprintf "structure %s redeclared" id);
 
-    Hashtbl.add contexte_structures id (Tstruct { s_name = id; s_fields = Hashtbl.create 0 })
+    (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
+    Hashtbl.add contexte_structures id { s_name = id; s_fields = Hashtbl.create 0 }
 
   | _ -> ()
+
 
 let sizeof = function
   | Tint | Tbool | Tstring | Tptr _ -> 8
   | _ -> (* TODO *) assert false 
+
 
 (* 2. declare functions and type fields *)
 let phase2 = function
@@ -140,11 +150,33 @@ let phase2 = function
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
     if id = "main" then (
       if pl <> [] || tyl <> [] then
-        error loc "func main must have no arguments and no return values";
-      found_main := true; )
+        error loc "func main must have no parameters and no return values";
+      found_main := true );
+
+    (* NOTE Vérification de l'unicité des noms de fonctions *)
+    if Hashtbl.find_opt contexte_functions id <> None then
+      error loc (Printf.sprintf "function %s redeclared" id);
+
+    (* NOTE Vérification de l'unicité des noms des paramètres *)
+    ( let is_same_identifier ({ id = id_x }, _) ({ id = id_y }, _) = id_x = id_y
+      in match Lib.find_opt_duplicate_item is_same_identifier pl with
+      | Some ({ id = id_param; loc = loc_param }, _) ->
+        error loc_param (Printf.sprintf "duplicate parameter %s in function %s" id_param id)
+      | None -> (); );
+
+    (* NOTE Vérification de la bonne formation de chacun des arguments *)
+    ( let check_param ({ id = id_param; loc = loc_param }, type_param) =
+        match type_opt type_param with
+        | None ->
+          error loc_param (Printf.sprintf "undefined type of parameter %s in function %s" id_param id)
+        | _ -> ()
+      in List.iter check_param pl);
+
+    Hashtbl.add contexte_functions id { fn_name = id; fn_params = []; fn_typ = [] }
 
   | PDstruct { ps_name = { id }; ps_fields = fl } ->
     (* TODO *) ()
+
 
 (* 3. type check function bodies *)
 let decl = function
@@ -157,6 +189,7 @@ let decl = function
   | PDstruct {ps_name={id}} ->
     (* TODO *) let s = { s_name = id; s_fields = Hashtbl.create 5 } in
     TDstruct s
+
 
 let file ~debug:b (imp, dl) =
   debug := b;
