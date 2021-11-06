@@ -1,9 +1,11 @@
 (ocamllex
- (modules lexer))
+  (modules lexer))
+
 (menhir
- (flags -v)
- (modules parser))
+  (flags -v)
+  (modules parser))
+
 (executable
- (flags ())
- (modules_without_implementation ast tast)
- (name main))
+  (flags ())
+  (modules_without_implementation ast tast)
+  (name main))

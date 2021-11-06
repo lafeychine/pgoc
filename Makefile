@@ -1,23 +1,23 @@
+EXE	=	_build/default/main.exe
+NAME	=	pgoc
 
-EXE=_build/default/main.exe
+all:		$(NAME)
 
-all: $(EXE)
+$(NAME):
+		dune build @all
+		cp $(EXE) $(NAME)
 
-$(EXE): *.ml*
-	-dune build @all
-	cp $(EXE) pgoc 
-
-test: $(EXE) test.go
-	./pgoc --debug test.go
-	gcc -g -no-pie test.s -o test
-	./test
-	go run test.go
+test:		$(NAME)
+		./tests/launch.sh
+		
 
 export-%:
-	cp test.go ../tests/exec/$*.go
-	go run test.go > ../tests/exec/$*.out
-
-.PHONY: clean
+		cp test.go ../tests/exec/$*.go
+		go run test.go > ../tests/exec/$*.out
 
 clean:
-	dune clean
+		dune clean
+		$(RM) $(RMFLAGS) $(NAME)
+
+
+.PHONY: $(NAME) all clean test

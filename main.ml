@@ -45,7 +45,10 @@ let () =
     close_in c;
     if !parse_only then exit 0;
     let f = Typing.file ~debug f in
+
     (* TODO add "ast_file" when "debug" is true. *)
+    let _ = if debug then Pretty.file Format.std_formatter f else () in
+
     if type_only then exit 0;
     let f = Rewrite.file ~debug f in
     if debug then eprintf "%a@." Pretty.file f;
