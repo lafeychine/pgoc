@@ -41,6 +41,7 @@ function compareFiles()
 launchTest "bad/func/multiple_func_def"
 launchTest "bad/func/multiple_param_func_def"
 launchTest "bad/func/unknown_param_func_type"
+launchTest "bad/func/unknown_return_value_func_type"
 
 launchTest "bad/main/missing_main"
 launchTest "bad/main/parameters_main"
