@@ -139,12 +139,15 @@ let phase1 = function
   | _ -> ()
 
 
-let sizeof = function
-  | Tint | Tbool | Tstring | Tptr _ -> 8
-  | _ -> (* TODO *) assert false 
-
-
 (* 2. declare functions and type fields *)
+let rec sizeof = function
+  | Tint | Tbool | Tstring | Tptr _ -> 8
+
+  | Tstruct { s_fields } -> Hashtbl.fold (fun _ { f_typ } acc -> acc + sizeof f_typ) s_fields 0
+
+  | _ -> (* TODO *) assert false
+
+
 let phase2 = function
   | PDfunction { pf_name={ id; loc }; pf_params=pl; pf_typ=tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
@@ -167,15 +170,31 @@ let phase2 = function
     (* NOTE Vérification de la bonne formation de chacun des arguments *)
     ( let check_param ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt type_param with
-        | None ->
-          error loc_param (Printf.sprintf "undefined type of parameter %s in function %s" id_param id)
-        | _ -> ()
-      in List.iter check_param pl);
+        | Some value -> ()
+        | None -> error loc_param (Printf.sprintf "undefined type of parameter %s in function %s" id_param id)
+      in List.map check_param pl);
 
     Hashtbl.add contexte_functions id { fn_name = id; fn_params = []; fn_typ = [] }
 
   | PDstruct { ps_name = { id }; ps_fields = fl } ->
-    (* TODO *) ()
+    let { s_fields } as structure = Hashtbl.find contexte_structures id in
+
+    let process_struct_field ({ id = id_field; loc = loc_field }, type_field) =
+      (* NOTE Vérification de l'unicité des champs de la structure *)
+      if Hashtbl.find_opt s_fields id_field <> None then
+        error loc_field (Printf.sprintf "duplicate field %s in structure %s" id_field id);
+
+      (* NOTE Vérification de la bonne formation du type *)
+      let f_typ = match type_opt type_field with
+        | Some f_typ -> f_typ;
+        | None -> error loc_field (Printf.sprintf "undefined type of field %s in structure %s" id_field id) in
+
+      let f_name = id_field in
+      let f_ofs = sizeof (Tstruct structure) in
+
+      Hashtbl.add s_fields id_field { f_name ; f_typ ; f_ofs }
+
+    in List.iter process_struct_field fl
 
 
 (* 3. type check function bodies *)
