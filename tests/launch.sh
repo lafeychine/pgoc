@@ -12,7 +12,7 @@ function launchTest()
     echo -n "Launch $1: "
 
     compareFiles <(${PGOC} "./tests/$1.go" 2>&1) \
-    		 <(awk "/${MAGIC_MSG}/,0" "${CALL_PATH}/$1.go" | sed -e '1d;$d')
+                 <(awk "/${MAGIC_MSG}/,0" "${CALL_PATH}/$1.go" | sed -e '1d;$d')
 
     echo ""
 }
@@ -31,8 +31,8 @@ function compareFiles()
 
         tput setaf 1; echo -n "KO"; tput setaf 7
 
-	echo ""
-	echo "${DIFF_OUTPUT[0]}"
+    echo ""
+    echo "${DIFF_OUTPUT[0]}"
 
     fi
 }
@@ -49,4 +49,6 @@ launchTest "bad/main/return_value_main"
 
 launchTest "bad/struct/multiple_struct_def"
 launchTest "bad/struct/multiple_fields_struct_def"
+launchTest "bad/struct/mutually_recursive_struct"
+launchTest "bad/struct/recursive_struct"
 launchTest "bad/struct/unknown_field_struct"

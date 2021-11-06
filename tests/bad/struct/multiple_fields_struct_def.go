@@ -5,6 +5,8 @@ type A struct {
 	x int
 }
 
+func main() {}
+
 /*
 == Expected compiler output ==
 File "./tests/bad/struct/multiple_fields_struct_def.go", line 5, characters 1-2:
