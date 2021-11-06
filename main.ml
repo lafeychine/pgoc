@@ -44,7 +44,7 @@ let () =
     let f = Parser.file Lexer.next_token lb in
     close_in c;
     if !parse_only then exit 0;
-    let f = Typing.file ~debug f in
+    let f = Typing.file f in
 
     (* TODO add "ast_file" when "debug" is true. *)
     let _ = if debug then Pretty.file Format.std_formatter f else () in

@@ -4,8 +4,6 @@ open Lib
 open Ast
 open Tast
 
-let debug = ref false
-
 let dummy_loc = Lexing.dummy_pos, Lexing.dummy_pos
 
 exception Error of Ast.location * string
@@ -47,11 +45,13 @@ let rec eq_type ty1 ty2 = match ty1, ty2 with
 
 let evar v = { expr_desc = TEident v; expr_typ = v.v_typ }
 
+(* NOTE Création d'une nouvelle variable *)
 let new_var =
   let id = ref 0 in
-  fun x loc ?(used=false) ty ->
+  fun name loc typ ?(used=false) ->
     incr id;
-    { v_name = x; v_id = !id; v_loc = loc; v_typ = ty; v_used = used; v_addr = false }
+    { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used; v_addr = false }
+
 
 module Env = struct
   module M = Map.Make(String)
@@ -68,7 +68,7 @@ module Env = struct
 
 
   let var x loc ?used ty env =
-    let v = new_var x loc ?used ty in
+    let v = new_var x loc ty ?used in
     all_vars := v :: !all_vars;
     add env v, v
 
@@ -140,20 +140,12 @@ let phase1 = function
       error loc (Printf.sprintf "structure %s redeclared" id);
 
     (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
-    Hashtbl.add contexte_structures id { s_name = id; s_fields = Hashtbl.create 0 }
+    Hashtbl.add contexte_structures id { s_name = id; s_fields = Hashtbl.create 5 }
 
   | _ -> ()
 
 
 (* 2. declare functions and type fields *)
-let rec sizeof = function
-  | Tint | Tbool | Tstring | Tptr _ -> 8
-
-  | Tstruct { s_fields } -> Hashtbl.fold (fun _ { f_typ } acc -> acc + sizeof f_typ) s_fields 0
-
-  | _ -> (* TODO *) assert false
-
-
 let phase2 = function
   | PDfunction { pf_name = { id; loc }; pf_params = pl; pf_typ = tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
@@ -171,13 +163,13 @@ let phase2 = function
       in match Lib.find_opt_duplicate_item is_same_identifier pl with
       | Some ({ id = id_param; loc = loc_param }, _) ->
         error loc_param (Printf.sprintf "duplicate parameter %s in function %s" id_param id)
-      | None -> (); );
+      | None -> () );
 
     (* NOTE Vérification de la bonne formation de chacun des paramètres *)
     let fn_params =
       let param_to_var ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt type_param with
-        | Some v_typ -> { v_name = id_param; v_id = 0; v_loc = loc_param; v_typ; v_used = false; v_addr = false }
+        | Some typ -> new_var id_param loc_param typ ~used:false
         | None -> error loc_param (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_type_name type_param) id_param id)
       in List.map param_to_var pl in
 
@@ -204,30 +196,57 @@ let phase2 = function
         | Some f_typ -> f_typ;
         | None -> error loc_field (Printf.sprintf "undefined type %s of field %s in structure %s" (get_type_name type_field) id_field id) in
 
-      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = sizeof (Tstruct structure) }
+      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 }
 
     in List.iter process_struct_field fl
 
 
 (* 3. type check function bodies *)
+let rec sizeof = function
+  | Tint | Tbool | Tstring | Tptr _ -> 8
+
+  | Tstruct { s_fields } -> Seq.fold_left (fun acc { f_typ } -> acc + sizeof f_typ) 0 (Hashtbl.to_seq_values s_fields)
+
+  | _ -> (* TODO *) assert false
+
+
 let decl = function
-  | PDfunction { pf_name={id; loc}; pf_body = e; pf_typ=tyl } ->
+  | PDfunction { pf_name = {id; loc}; pf_body = e; pf_typ = tyl } ->
     (* TODO check name and type *)
     let f = { fn_name = id; fn_params = []; fn_typ = [] } in
     let e, rt = expr Env.empty e in
     TDfunction (f, e)
 
-  | PDstruct {ps_name={id}} ->
-    (* TODO *) let s = { s_name = id; s_fields = Hashtbl.create 5 } in
-    TDstruct s
+  | PDstruct { ps_name = { id; loc } } ->
+    let structure = Hashtbl.find contexte_structures id in
+
+    ( let rec get_recursive_struct_field { s_fields } acc =
+        Seq.fold_left (find_recursive_struct_field acc) None (Hashtbl.to_seq_values s_fields)
+      and find_recursive_struct_field acc inv field =
+        let { f_name; f_typ } = field in
+        match f_typ with
+        | Tstruct structure ->
+          if List.mem f_name acc then Some field
+          else get_recursive_struct_field structure (f_name :: acc)
+        | _ -> inv in
+
+      match get_recursive_struct_field structure [ id ] with
+      | Some { f_name } -> error loc (Printf.sprintf "recursive field %s in the struct %s" f_name id)
+      | None -> ());
+
+    TDstruct structure
 
 
-let file ~debug:b (imp, dl) =
-  debug := b;
+let file (imp, dl) =
   List.iter phase1 dl;
   List.iter phase2 dl;
+
   if not !found_main then error dummy_loc "missing method main";
+
   let dl = List.map decl dl in
+
   Env.check_unused (); (* TODO variables non utilisees *)
+
   if imp && not !fmt_used then error dummy_loc "fmt imported but not used";
+
   dl
