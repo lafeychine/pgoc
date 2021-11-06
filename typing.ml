@@ -17,6 +17,12 @@ let contexte_structures: (string, structure) Hashtbl.t = Hashtbl.create 0
 let contexte_functions: (string, function_) Hashtbl.t = Hashtbl.create 0
 
 
+(* NOTE Génération du nom d'un type *)
+let rec get_type_name = function
+  | PTident { id } -> id
+  | PTptr ptyp -> "*" ^ get_type_name ptyp
+
+
 (* NOTE Récupération, si existant, du type correspondant à la chaîne de caractère *)
 let rec type_opt = function
   | PTident { id = "int" } -> Some Tint
@@ -149,7 +155,7 @@ let rec sizeof = function
 
 
 let phase2 = function
-  | PDfunction { pf_name={ id; loc }; pf_params=pl; pf_typ=tyl } ->
+  | PDfunction { pf_name = { id; loc }; pf_params = pl; pf_typ = tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
     if id = "main" then (
       if pl <> [] || tyl <> [] then
@@ -167,14 +173,23 @@ let phase2 = function
         error loc_param (Printf.sprintf "duplicate parameter %s in function %s" id_param id)
       | None -> (); );
 
-    (* NOTE Vérification de la bonne formation de chacun des arguments *)
-    ( let check_param ({ id = id_param; loc = loc_param }, type_param) =
+    (* NOTE Vérification de la bonne formation de chacun des paramètres *)
+    let fn_params =
+      let param_to_var ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt type_param with
-        | Some value -> ()
-        | None -> error loc_param (Printf.sprintf "undefined type of parameter %s in function %s" id_param id)
-      in List.map check_param pl);
+        | Some v_typ -> { v_name = id_param; v_id = 0; v_loc = loc_param; v_typ; v_used = false; v_addr = false }
+        | None -> error loc_param (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_type_name type_param) id_param id)
+      in List.map param_to_var pl in
 
-    Hashtbl.add contexte_functions id { fn_name = id; fn_params = []; fn_typ = [] }
+    (* NOTE Vérification de la bonne formation de chacun des valeurs de retours *)
+    let fn_typ =
+      let get_type_return_value type_return_value =
+        match type_opt type_return_value with
+        | Some value -> value
+        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_type_name type_return_value) id)
+      in List.map get_type_return_value tyl in
+
+    Hashtbl.add contexte_functions id { fn_name = id; fn_params; fn_typ }
 
   | PDstruct { ps_name = { id }; ps_fields = fl } ->
     let { s_fields } as structure = Hashtbl.find contexte_structures id in
@@ -187,12 +202,9 @@ let phase2 = function
       (* NOTE Vérification de la bonne formation du type *)
       let f_typ = match type_opt type_field with
         | Some f_typ -> f_typ;
-        | None -> error loc_field (Printf.sprintf "undefined type of field %s in structure %s" id_field id) in
+        | None -> error loc_field (Printf.sprintf "undefined type %s of field %s in structure %s" (get_type_name type_field) id_field id) in
 
-      let f_name = id_field in
-      let f_ofs = sizeof (Tstruct structure) in
-
-      Hashtbl.add s_fields id_field { f_name ; f_typ ; f_ofs }
+      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = sizeof (Tstruct structure) }
 
     in List.iter process_struct_field fl
 
