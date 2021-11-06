@@ -47,3 +47,5 @@ launchTest "bad/main/parameters_main"
 launchTest "bad/main/return_value_main"
 
 launchTest "bad/struct/multiple_struct_def"
+launchTest "bad/struct/multiple_fields_struct_def"
+launchTest "bad/struct/unknown_field_struct"

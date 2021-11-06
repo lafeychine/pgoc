@@ -1,10 +1,10 @@
 package main
 
-func toto() {}
-func toto() {}
+func f() {}
+func f() {}
 
 /*
 == Expected compiler output ==
-File "./tests/bad/func/multiple_func_def.go", line 4, characters 5-9:
-error: function toto redeclared
+File "./tests/bad/func/multiple_func_def.go", line 4, characters 5-6:
+error: function f redeclared
 */

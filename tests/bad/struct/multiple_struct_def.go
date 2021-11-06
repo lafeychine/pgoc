@@ -1,15 +1,15 @@
 package main
 
-type Toto struct {
+type A struct {
 	x int
 }
 
-type Toto struct {
+type A struct {
 	x int
 }
 
 /*
 == Expected compiler output ==
-File "./tests/bad/struct/multiple_struct_def.go", line 7, characters 5-9:
-error: structure Toto redeclared
+File "./tests/bad/struct/multiple_struct_def.go", line 7, characters 5-6:
+error: structure A redeclared
 */
