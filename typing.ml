@@ -1,4 +1,3 @@
-
 open Format
 open Lib
 open Ast
@@ -13,6 +12,10 @@ let error loc e = raise (Error (loc, e))
 (* NOTE Créations des contextes *)
 let contexte_structures: (string, structure) Hashtbl.t = Hashtbl.create 0
 let contexte_functions: (string, function_) Hashtbl.t = Hashtbl.create 0
+
+
+let found_main = ref false
+let fmt_used = ref false
 
 
 (* NOTE Génération du nom d'un type *)
@@ -45,6 +48,7 @@ let rec eq_type ty1 ty2 = match ty1, ty2 with
 
 let evar v = { expr_desc = TEident v; expr_typ = v.v_typ }
 
+
 (* NOTE Création d'une nouvelle variable *)
 let new_var =
   let id = ref 0 in
@@ -75,19 +79,19 @@ module Env = struct
   (* TODO type () et vecteur de types *)
 end
 
-let tvoid = Tmany []
+
 let make d ty = { expr_desc = d; expr_typ = ty }
-let stmt d = make d tvoid
+let stmt d = make d Tvoid
 
 let rec expr env e =
   let e, ty, rt = expr_desc env e.pexpr_loc e.pexpr_desc in
   { expr_desc = e; expr_typ = ty }, rt
 
 and expr_desc env loc = function
-  | PEskip ->
-    TEskip, tvoid, false
+  | PEskip -> TEskip, Tvoid, false
+
   | PEconstant c ->
-    (* TODO *) TEconstant c, tvoid, false
+    (* TODO *) TEconstant c, Tvoid, false
   | PEbinop (op, e1, e2) ->
     (* TODO *) assert false
   | PEunop (Uamp, e1) ->
@@ -95,7 +99,9 @@ and expr_desc env loc = function
   | PEunop (Uneg | Unot | Ustar as op, e1) ->
     (* TODO *) assert false
   | PEcall ({id = "fmt.Print"}, el) ->
-    (* TODO *) TEprint [], tvoid, false
+    fmt_used := true;
+    (* TODO *) TEprint [], Tvoid, false
+
   | PEcall ({id="new"}, [{pexpr_desc=PEident {id}}]) ->
     let ty = match id with
       | "int" -> Tint | "bool" -> Tbool | "string" -> Tstring
@@ -117,19 +123,15 @@ and expr_desc env loc = function
   | PEdot (e, id) ->
     (* TODO *) assert false
   | PEassign (lvl, el) ->
-    (* TODO *) TEassign ([], []), tvoid, false 
+    (* TODO *) TEassign ([], []), Tvoid, false
   | PEreturn el ->
-    (* TODO *) TEreturn [], tvoid, true
+    (* TODO *) TEreturn [], Tvoid, true
   | PEblock el ->
-    (* TODO *) TEblock [], tvoid, false
+    (* TODO *) TEblock [], Tvoid, false
   | PEincdec (e, op) ->
     (* TODO *) assert false
   | PEvars _ ->
     (* TODO *) assert false 
-
-
-let found_main = ref false
-let fmt_used = ref false
 
 
 (* 1. declare structures *)
@@ -178,8 +180,11 @@ let phase2 = function
       let get_type_return_value type_return_value =
         match type_opt type_return_value with
         | Some value -> value
-        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_type_name type_return_value) id)
-      in List.map get_type_return_value tyl in
+        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_type_name type_return_value) id) in
+      match List.map get_type_return_value tyl with
+      | [] -> Tvoid
+      | [ return_value ] -> return_value
+      | return_values -> Tmany return_values in
 
     Hashtbl.add contexte_functions id { fn_name = id; fn_params; fn_typ }
 
@@ -211,11 +216,12 @@ let rec sizeof = function
 
 
 let decl = function
-  | PDfunction { pf_name = {id; loc}; pf_body = e; pf_typ = tyl } ->
-    (* TODO check name and type *)
-    let f = { fn_name = id; fn_params = []; fn_typ = [] } in
+  | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
+    let fn = Hashtbl.find contexte_functions id in
+
     let e, rt = expr Env.empty e in
-    TDfunction (f, e)
+
+    TDfunction (fn, e)
 
   | PDstruct { ps_name = { id; loc } } ->
     let structure = Hashtbl.find contexte_structures id in

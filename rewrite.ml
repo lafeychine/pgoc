@@ -63,7 +63,6 @@ let mkvar =
     incr c;
     Typing.new_var ("aux" ^ string_of_int !c) Typing.dummy_loc ~used:true ty
 
-let tvoid = Typing.tvoid
 let make = Typing.make
 let stmt = Typing.stmt
 let ident v = make (TEident v) v.v_typ
@@ -72,7 +71,15 @@ let star v =
   make (TEunop (Ustar, ident v))
     (match v.v_typ with Tptr ty -> ty | _ -> assert false)
 let addr e = make (TEunop (Uamp, e)) (Tptr e.expr_typ)
-let many_results f = List.length f.fn_typ > 1
+
+let many_results = function
+  | Tmany _ -> true
+  | _ -> false
+
+let type_to_list = function
+  | Tvoid -> []
+  | Tmany types -> types
+  | typ -> [ typ ]
 
 module Vmap = Map.Make(struct
     type t = var let compare v1 v2 = v1.v_id - v2.v_id end)
@@ -104,12 +111,12 @@ let rec expr rw e =
     mk (TEunop (op, expr rw e1))
   | TEnew typ ->
     e
-  | TEcall (g, [{expr_desc=TEcall(f, el)}]) when many_results f ->
+  | TEcall (g, [{expr_desc=TEcall(f, el)}]) when many_results f.fn_typ ->
     (* g(f(...)) => var v1,...,vn; f(..., &v1,...,&vn); g(v1,...,vn) *)
     let vl, e = many rw f el in
     let gargs = List.map ident vl in
     stmt (TEblock [stmt (TEvars vl); e; mk (TEcall (g, gargs))])
-  | TEcall (f, el) when many_results f ->
+  | TEcall (f, el) when many_results f.fn_typ ->
     let vl, e = many rw f el in
     mk (TEblock [stmt (TEvars vl); e])
   | TEcall (f, el) ->
@@ -125,16 +132,16 @@ let rec expr rw e =
   | TEassign ([lvl], [e]) ->
     mk (TEassign ([expr rw lvl], [expr rw e]))
   | TEassign (lvl, [{expr_desc=TEcall (g, [{expr_desc=TEcall(f, el)}])}])
-    when many_results f ->
+    when many_results f.fn_typ ->
     (* RW2 lv1,...lvn = g(f(...)) =>
            var v1,...,vk; f(...,&v1,...,&vk); g(v1,...,vk, &lv1,...&lvn) *)
-    assert (many_results g);
+    assert (many_results g.fn_typ);
     let vl, e = many rw f el in
     let gargs = List.map ident vl @ List.map addr lvl in
     stmt (TEblock [stmt (TEvars vl); e; stmt (TEcall (g, gargs))])
   | TEassign (lvl, [{expr_desc=TEcall (f, el)}]) ->
     (* RW2 lv1,...lvn = f(...) => f(..., &lv1,...,&lvn) *)
-    assert (many_results f);
+    assert (many_results f.fn_typ);
     mk (TEcall(f, exprs rw el @ List.map addr lvl))
   | TEassign (lvl, [_]) ->
     assert false
@@ -143,17 +150,17 @@ let rec expr rw e =
     (* RW 1 *)
     let temp code e =
       let v = mkvar e.expr_typ in
-      make (TEassign ([ident v], [expr rw e])) tvoid ::
-      make (TEvars [v]) tvoid ::
+      make (TEassign ([ident v], [expr rw e])) Tvoid ::
+      make (TEvars [v]) Tvoid ::
       code, v in
     let code, tmpl = map_fold_left temp [] el in
     let assign code lv tmp =
-      make (TEassign ([lv], [ident tmp])) tvoid :: code in
+      make (TEassign ([lv], [ident tmp])) Tvoid :: code in
     let code = List.fold_left2 assign code lvl tmpl in
     mk (TEblock (List.rev code))
   | TEif (e1, e2, e3) ->
     mk (TEif (expr rw e1, expr rw e2, expr rw e3))
-  | TEreturn ([{expr_desc=TEcall(f, el)}]) when many_results f ->
+  | TEreturn ([{expr_desc=TEcall(f, el)}]) when many_results f.fn_typ ->
     (* RW 2 return f(...) => f(..., r1,...,rn); return *)
     stmt (TEblock [stmt (TEcall (f, exprs rw el @ List.map ident rw.retvl));
                    stmt (TEreturn [])])
@@ -179,12 +186,12 @@ let rec expr rw e =
     assert false
 
 and many rw f el =
-  assert (many_results f);
+  assert (many_results f.fn_typ);
   (* f(...) => var v1,...,vn; f(..., &v1,...,&vn) *)
-  let vl = List.map mkvar f.fn_typ in
+  let vl = List.map mkvar (type_to_list f.fn_typ) in
   let fargs = List.map (fun v -> addr (ident v)) vl in
   match el with
-  | [{expr_desc=TEcall(g, el')}] when many_results g ->
+  | [{expr_desc=TEcall(g, el')}] when many_results g.fn_typ ->
     (* f(g(...)) =>
        var v1,...,vn,w1,...,wk; g(...&w1,...,&wk); f(w1,..,wk, &v1,...,&vn) *)
     let vl', e' = many rw f el' in
@@ -236,11 +243,11 @@ let function_ f e =
   let (rw, init), pl = map_fold_left param (rw_empty, []) f.fn_params in
   (* RW 2 *)
   let rw, pl, tyl = match f.fn_typ with
-    | [] | [_] as tyl -> rw, pl, tyl
-    | tyl ->
+    | Tmany tyl ->
       let result ty = mkvar (Tptr ty) in
       let vl = List.map result tyl in
-      { rw with retvl = vl }, pl @ vl, [] in
+      { rw with retvl = vl }, pl @ vl, []
+    | _ as tyl -> rw, pl, [ tyl ] in
   let f = { f with fn_params = pl } in
   TDfunction (f, stmt (TEblock (init @ [expr rw e])))
 

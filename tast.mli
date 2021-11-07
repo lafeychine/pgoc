@@ -12,7 +12,7 @@ type incdec = Ast.incdec
 type function_ = {
   fn_name: string;
   fn_params: var list;
-  fn_typ: typ list;
+  fn_typ: typ;
 }
 
 and structure = {
@@ -22,10 +22,13 @@ and structure = {
 }
 
 and typ =
-  | Tint | Tbool | Tstring
+  | Tvoid
+  | Tint
+  | Tbool
+  | Tstring
   | Tstruct of structure
   | Tptr of typ
-  | Tmany of typ list (* 0 ou >= 2 *)
+  | Tmany of typ list (* >= 2 *)
 (* TODO autres types pour l'analyse semantique *)
 
 and var = {
