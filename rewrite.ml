@@ -63,8 +63,9 @@ let mkvar =
     incr c;
     Typing.new_var ("aux" ^ string_of_int !c) Typing.dummy_loc ~used:true ty
 
-let make = Typing.make
-let stmt = Typing.stmt
+let make = Typing.new_expr
+let stmt = Typing.new_stmt
+
 let ident v = make (TEident v) v.v_typ
 let is_struct = function Tstruct _ -> true | _ -> false
 let star v =

@@ -9,6 +9,7 @@ exception Error of Ast.location * string
 
 let error loc e = raise (Error (loc, e))
 
+
 (* NOTE Créations des contextes *)
 let contexte_structures: (string, structure) Hashtbl.t = Hashtbl.create 0
 let contexte_functions: (string, function_) Hashtbl.t = Hashtbl.create 0
@@ -46,7 +47,12 @@ let rec eq_type ty1 ty2 = match ty1, ty2 with
   | _ -> false
 (* TODO autres types *)
 
-let evar v = { expr_desc = TEident v; expr_typ = v.v_typ }
+
+(* NOTE Récupération du type d'une liste *)
+let list_type = function
+  | [] -> Tvoid
+  | [ return_value ] -> return_value
+  | return_values -> Tmany return_values
 
 
 (* NOTE Création d'une nouvelle variable *)
@@ -57,19 +63,23 @@ let new_var =
     { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used; v_addr = false }
 
 
+(* NOTE Environnement des variables de fonction *)
 module Env = struct
   module M = Map.Make(String)
   type t = var M.t
+
   let empty = M.empty
+
   let find = M.find
+
   let add env v = M.add v.v_name v env
 
   let all_vars = ref []
+
   let check_unused () =
     let check v =
       if v.v_name <> "_" && (* TODO used *) true then error v.v_loc "unused variable" in
     List.iter check !all_vars
-
 
   let var x loc ?used ty env =
     let v = new_var x loc ty ?used in
@@ -80,58 +90,85 @@ module Env = struct
 end
 
 
-let make d ty = { expr_desc = d; expr_typ = ty }
-let stmt d = make d Tvoid
+(* NOTE Vérifie si un bloc contient un return, et plus rien après *)
+let rec check_return_expr_list loc expr_list =
+  ( List.map (fun (expr, _) -> expr ) expr_list,
+    List.fold_left (check_return_expr_desc_list loc) false expr_list )
+and check_return_expr_desc_list loc rt (_, expr_rt) =
+  match expr_rt, rt with
+  | true,  false -> true
+  | false, false -> false
+  | _, true -> error loc "block contains unreachable code"
 
-let rec expr env e =
-  let e, ty, rt = expr_desc env e.pexpr_loc e.pexpr_desc in
-  { expr_desc = e; expr_typ = ty }, rt
 
+let new_expr desc typ = { expr_desc = desc; expr_typ = typ }
+let new_stmt desc = new_expr desc Tvoid
+
+let rec expr env { pexpr_loc; pexpr_desc } = expr_desc env pexpr_loc pexpr_desc
+and expr_no_return env pexpr = let (expr, _) = expr env pexpr in expr
 and expr_desc env loc = function
-  | PEskip -> TEskip, Tvoid, false
+  | PEskip -> new_stmt TEskip, false
 
-  | PEconstant c ->
-    (* TODO *) TEconstant c, Tvoid, false
+  | PEconstant c -> new_expr (TEconstant c) ( match c with
+      | Cbool _ -> Tbool
+      | Cint _ -> Tint
+      | Cstring _ -> Tstring ), false
+
   | PEbinop (op, e1, e2) ->
     (* TODO *) assert false
+
   | PEunop (Uamp, e1) ->
     (* TODO *) assert false
+
   | PEunop (Uneg | Unot | Ustar as op, e1) ->
     (* TODO *) assert false
-  | PEcall ({id = "fmt.Print"}, el) ->
-    fmt_used := true;
-    (* TODO *) TEprint [], Tvoid, false
 
-  | PEcall ({id="new"}, [{pexpr_desc=PEident {id}}]) ->
+  | PEcall ({ id = "fmt.Print" }, args) ->
+    fmt_used := true;
+    new_stmt (TEprint (List.map (expr_no_return env) args)), false
+  (* TODO Contraindre aux types int bool string ptr *)
+
+  | PEcall ({ id = "new" }, [{ pexpr_desc = PEident { id } }]) ->
     let ty = match id with
       | "int" -> Tint | "bool" -> Tbool | "string" -> Tstring
       | _ -> (* TODO *) error loc ("no such type " ^ id) in
-    TEnew ty, Tptr ty, false
-  | PEcall ({id="new"}, _) ->
+    new_expr (TEnew ty) (Tptr ty), false
+
+  | PEcall ({ id = "new" }, _) ->
     error loc "new expects a type"
+
   | PEcall (id, el) ->
     (* TODO *) assert false
+
   | PEfor (e, b) ->
     (* TODO *) assert false
+
   | PEif (e1, e2, e3) ->
     (* TODO *) assert false
+
   | PEnil ->
     (* TODO *) assert false
-  | PEident {id=id} ->
-    (* TODO *) (try let v = Env.find id env in TEident v, v.v_typ, false
+
+  | PEident { id } ->
+    (* TODO *) (try let v = Env.find id env in new_expr (TEident v) v.v_typ, false
                 with Not_found -> error loc ("unbound variable " ^ id))
+
   | PEdot (e, id) ->
     (* TODO *) assert false
+
   | PEassign (lvl, el) ->
-    (* TODO *) TEassign ([], []), Tvoid, false
-  | PEreturn el ->
-    (* TODO *) TEreturn [], Tvoid, true
-  | PEblock el ->
-    (* TODO *) TEblock [], Tvoid, false
+    (* TODO *) new_stmt (TEassign ([], [])), false
+
+  | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
+
+  | PEblock el -> let (expr_list, rt) = check_return_expr_list loc (List.map (expr env) el) in
+    new_stmt (TEblock expr_list), rt
+
   | PEincdec (e, op) ->
     (* TODO *) assert false
+
   | PEvars _ ->
-    (* TODO *) assert false 
+    (* TODO *) assert false
 
 
 (* 1. declare structures *)
@@ -180,11 +217,8 @@ let phase2 = function
       let get_type_return_value type_return_value =
         match type_opt type_return_value with
         | Some value -> value
-        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_type_name type_return_value) id) in
-      match List.map get_type_return_value tyl with
-      | [] -> Tvoid
-      | [ return_value ] -> return_value
-      | return_values -> Tmany return_values in
+        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_type_name type_return_value) id)
+      in list_type (List.map get_type_return_value tyl) in
 
     Hashtbl.add contexte_functions id { fn_name = id; fn_params; fn_typ }
 
@@ -219,7 +253,7 @@ let decl = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
     let fn = Hashtbl.find contexte_functions id in
 
-    let e, rt = expr Env.empty e in
+    let (e, _) = expr Env.empty e in
 
     TDfunction (fn, e)
 
