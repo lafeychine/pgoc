@@ -48,6 +48,8 @@ launchTest "bad/main/parameters_main"
 launchTest "bad/main/return_value_main"
 
 launchTest "bad/return/stmt_after_return"
+launchTest "bad/return/stmt_after_return_block"
+launchTest "bad/return/bad_return_type"
 
 launchTest "bad/struct/multiple_struct_def"
 launchTest "bad/struct/multiple_fields_struct_def"
