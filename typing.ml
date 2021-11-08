@@ -20,9 +20,18 @@ let fmt_used = ref false
 
 
 (* NOTE Génération du nom d'un type *)
-let rec get_type_name = function
+let rec get_ast_type_name = function
   | PTident { id } -> id
-  | PTptr ptyp -> "*" ^ get_type_name ptyp
+  | PTptr ptyp -> "*" ^ get_ast_type_name ptyp
+
+let rec get_tast_type_name = function
+  | Tvoid -> "void"
+  | Tint -> "int"
+  | Tbool -> "bool"
+  | Tstring -> "string"
+  | Tstruct { s_name } -> s_name
+  | Tptr typ -> "*" ^ get_tast_type_name typ
+  | Tmany (x :: xs) -> List.fold_left (fun acc typ -> acc ^ ", " ^ get_tast_type_name typ) (get_tast_type_name x) xs
 
 
 (* NOTE Récupération, si existant, du type correspondant à la chaîne de caractère *)
@@ -40,12 +49,18 @@ let rec type_opt = function
       | None         -> None )
 
 
-let rec eq_type ty1 ty2 = match ty1, ty2 with
-  | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
+(* NOTE Comparaison de deux types *)
+let rec eq_type ty1 ty2 =
+  match ty1, ty2 with
+  | Tvoid, Tvoid | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
+
   | Tstruct s1, Tstruct s2 -> s1 == s2
+
   | Tptr ty1, Tptr ty2 -> eq_type ty1 ty2
+
+  | Tmany ty1, Tmany ty2 -> List.for_all2 (eq_type) ty1 ty2
+
   | _ -> false
-(* TODO autres types *)
 
 
 (* NOTE Récupération du type d'une liste *)
@@ -91,10 +106,10 @@ end
 
 
 (* NOTE Vérifie si un bloc contient un return, et plus rien après *)
-let rec check_return_expr_list loc expr_list =
+let rec check_unreachable_expr_list loc expr_list =
   ( List.map (fun (expr, _) -> expr ) expr_list,
-    List.fold_left (check_return_expr_desc_list loc) false expr_list )
-and check_return_expr_desc_list loc rt (_, expr_rt) =
+    List.fold_left (check_unreachable_expr_desc_list loc) false expr_list )
+and check_unreachable_expr_desc_list loc rt (_, expr_rt) =
   match expr_rt, rt with
   | true,  false -> true
   | false, false -> false
@@ -144,7 +159,9 @@ and expr_desc env loc = function
     (* TODO *) assert false
 
   | PEif (e1, e2, e3) ->
-    (* TODO *) assert false
+    let (e2, rt_if) = expr env e2 in
+    let (e3, rt_else) = expr env e3 in
+    new_stmt (TEif (expr_no_return env e1, e2, e3)), rt_if && rt_else
 
   | PEnil ->
     (* TODO *) assert false
@@ -161,7 +178,8 @@ and expr_desc env loc = function
 
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
-  | PEblock el -> let (expr_list, rt) = check_return_expr_list loc (List.map (expr env) el) in
+  | PEblock el ->
+    let (expr_list, rt) = check_unreachable_expr_list loc (List.map (expr env) el) in
     new_stmt (TEblock expr_list), rt
 
   | PEincdec (e, op) ->
@@ -209,7 +227,7 @@ let phase2 = function
       let param_to_var ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt type_param with
         | Some typ -> new_var id_param loc_param typ ~used:false
-        | None -> error loc_param (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_type_name type_param) id_param id)
+        | None -> error loc_param (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_ast_type_name type_param) id_param id)
       in List.map param_to_var pl in
 
     (* NOTE Vérification de la bonne formation de chacun des valeurs de retours *)
@@ -217,7 +235,7 @@ let phase2 = function
       let get_type_return_value type_return_value =
         match type_opt type_return_value with
         | Some value -> value
-        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_type_name type_return_value) id)
+        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_ast_type_name type_return_value) id)
       in list_type (List.map get_type_return_value tyl) in
 
     Hashtbl.add contexte_functions id { fn_name = id; fn_params; fn_typ }
@@ -233,7 +251,7 @@ let phase2 = function
       (* NOTE Vérification de la bonne formation du type *)
       let f_typ = match type_opt type_field with
         | Some f_typ -> f_typ;
-        | None -> error loc_field (Printf.sprintf "undefined type %s of field %s in structure %s" (get_type_name type_field) id_field id) in
+        | None -> error loc_field (Printf.sprintf "undefined type %s of field %s in structure %s" (get_ast_type_name type_field) id_field id) in
 
       Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 }
 
@@ -254,6 +272,23 @@ let decl = function
     let fn = Hashtbl.find contexte_functions id in
 
     let (e, _) = expr Env.empty e in
+
+    (* NOTE Vérification de chacun des return *)
+    ( let rec iter_return_stmt f { expr_desc } =
+        match expr_desc with
+        | TEblock expr_list -> List.iter (iter_return_stmt f) expr_list
+        | TEif (_, expr, _) -> iter_return_stmt f expr
+        | TEfor (_, expr) -> iter_return_stmt f expr
+        | TEreturn return_values -> f return_values
+        | _ -> () in
+      let check_return_type { fn_name; fn_typ } return_values =
+        let return_type = list_type (List.map (fun { expr_typ } -> expr_typ) return_values) in
+        if not (eq_type fn_typ return_type) then
+          error loc
+            (Printf.sprintf "Bad return type %s, expected %s in function %s"
+               (get_tast_type_name return_type) (get_tast_type_name fn_typ) fn_name)
+
+      in iter_return_stmt (check_return_type fn) e );
 
     TDfunction (fn, e)
 
