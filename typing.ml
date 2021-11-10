@@ -108,8 +108,8 @@ end
 (* NOTE Vérifie si un bloc contient un return, et plus rien après *)
 let rec check_unreachable_expr_list loc expr_list =
   ( List.map (fun (expr, _) -> expr ) expr_list,
-    List.fold_left (check_unreachable_expr_desc_list loc) false expr_list )
-and check_unreachable_expr_desc_list loc rt (_, expr_rt) =
+    List.fold_left (check_unreachable_expr loc) false expr_list )
+and check_unreachable_expr loc rt (_, expr_rt) =
   match expr_rt, rt with
   | true,  false -> true
   | false, false -> false
@@ -159,9 +159,12 @@ and expr_desc env loc = function
     (* TODO *) assert false
 
   | PEif (e1, e2, e3) ->
+    let e1 = expr_no_return env e1 in
     let (e2, rt_if) = expr env e2 in
     let (e3, rt_else) = expr env e3 in
-    new_stmt (TEif (expr_no_return env e1, e2, e3)), rt_if && rt_else
+    ( match e3 with
+      | { expr_desc = TEskip } -> new_stmt (TEif (e1, e2, e3)), rt_if
+      | _ -> new_stmt (TEif (e1, e2, e3)), rt_if && rt_else );
 
   | PEnil ->
     (* TODO *) assert false
@@ -269,9 +272,9 @@ let rec sizeof = function
 
 let decl = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
-    let fn = Hashtbl.find contexte_functions id in
+    let { fn_name; fn_typ } as fn = Hashtbl.find contexte_functions id in
 
-    let (e, _) = expr Env.empty e in
+    let (e, rt) = expr Env.empty e in
 
     (* NOTE Vérification de chacun des return *)
     ( let rec iter_return_stmt f { expr_desc } =
@@ -285,10 +288,16 @@ let decl = function
         let return_type = list_type (List.map (fun { expr_typ } -> expr_typ) return_values) in
         if not (eq_type fn_typ return_type) then
           error loc
-            (Printf.sprintf "Bad return type %s, expected %s in function %s"
+            (Printf.sprintf "bad return type %s, expected %s in function %s"
                (get_tast_type_name return_type) (get_tast_type_name fn_typ) fn_name)
 
       in iter_return_stmt (check_return_type fn) e );
+
+    (* NOTE Vérification du branche du flot d'exécution *)
+    ( match fn_typ, rt with
+      | Tvoid, _ -> ()
+      | _, false -> error loc (Printf.sprintf "missing return at end of function %s" fn_name)
+      | _, _ -> () );
 
     TDfunction (fn, e)
 

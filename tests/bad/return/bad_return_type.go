@@ -9,5 +9,5 @@ func main() {}
 /*
 == Expected compiler output ==
 File "./tests/bad/return/bad_return_type.go", line 3, characters 5-8:
-error: Bad return type int, string, expected int, int in function foo
+error: bad return type int, string, expected int, int in function foo
 */
