@@ -55,7 +55,13 @@ let () =
 
     if type_only then exit 0;
     let f = Rewrite.file ~debug f in
-    if debug then eprintf "%a@." Pretty.file f;
+
+    if debug then begin
+      let ast_dot_file = open_out (Filename.chop_suffix file ".go" ^ "_tast.dot") in
+      Printf.fprintf ast_dot_file "%s" (Pretty.get_dot_tast f);
+      close_out ast_dot_file
+    end;
+
     let code = Compile.file ~debug f in
     let c = open_out (Filename.chop_suffix file ".go" ^ ".s") in
     let fmt = formatter_of_out_channel c in
