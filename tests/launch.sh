@@ -2,26 +2,50 @@
 
 CALL_PATH="$(dirname "$0")"
 
-MAGIC_MSG="== Expected compiler output =="
-PGOC="./pgoc"
+MSG_EXPECTED_COMPILER="== Expected compiler output =="
+MSG_EXPECTED_TAST="== Expected TAST =="
+PGOC="./pgoc --no-pretty"
 
 
 # void launchTest(String folderPath)
 function launchTest()
 {
-    echo -n "Launch $1: "
+    echo "Launch $1:"
 
-    compareFiles <(${PGOC} "./tests/$1.go" 2>&1) \
-                 <(awk "/${MAGIC_MSG}/,0" "${CALL_PATH}/$1.go" | sed -e '1d;$d')
+    if [[ $(grep "${MSG_EXPECTED_COMPILER}" "./tests/$1.go") ]]
+    then
+
+        compareFiles "Compiler output" \
+                     <(${PGOC} --type-only "./tests/$1.go" 2>&1) \
+                     <(awk "/${MSG_EXPECTED_COMPILER}/,0" "${CALL_PATH}/$1.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+
+    fi
+
+    if [[ $(grep "${MSG_EXPECTED_TAST}" "./tests/$1.go") ]]
+    then
+
+        compareFiles "No error" \
+                     <(${PGOC} --debug --type-only "./tests/$1.go" 2>&1) \
+                     <(echo -ne "")
+
+        compareFiles "TAST output" \
+                     "./tests/$1_tast.dot" \
+                     <(awk "/${MSG_EXPECTED_TAST}/,0" "${CALL_PATH}/$1.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+
+        rm -f "./tests/$1_tast.dot"
+
+    fi
 
     echo ""
 }
 
 
-# void compareFiles(String file, String expectedFile)
+# void compareFiles(String msg, String file, String expectedFile)
 function compareFiles()
 {
-    DIFF_OUTPUT=$(diff -Bw "$1" "$2")
+    echo -ne " - $1: "
+
+    DIFF_OUTPUT=$(diff -Bw "$2" "$3")
 
     if [[ $? -eq 0 ]]; then
 
@@ -31,10 +55,12 @@ function compareFiles()
 
         tput setaf 1; echo -n "KO"; tput setaf 7
 
-    echo ""
-    echo "${DIFF_OUTPUT[0]}"
+        echo ""
+        echo "${DIFF_OUTPUT[0]}"
 
     fi
+
+    echo ""
 }
 
 
@@ -56,3 +82,5 @@ launchTest "bad/struct/multiple_fields_struct_def"
 launchTest "bad/struct/mutually_recursive_struct"
 launchTest "bad/struct/recursive_struct"
 launchTest "bad/struct/unknown_field_struct"
+
+launchTest "good/print/string"
