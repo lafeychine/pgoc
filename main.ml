@@ -9,13 +9,15 @@ open Parser
 let usage = "usage: ./pgoc [options] file.go"
 
 let debug = ref false
+let no_pretty = ref false
 let parse_only = ref false
 let type_only = ref false
 
 let spec =
-  [ "--debug", Arg.Set debug, "  runs in debug mode";
-    "--parse-only", Arg.Set parse_only, "  stops after parsing";
-    "--type-only", Arg.Set type_only, "  stops after typing";
+  [ "--debug", Arg.Set debug, "        runs in debug mode";
+    "--no-pretty", Arg.Set no_pretty, "    runs without pretty messages";
+    "--parse-only", Arg.Set parse_only, "   stops after parsing";
+    "--type-only", Arg.Set type_only, "    stops after typing";
   ]
 
 let file =
@@ -46,21 +48,22 @@ let () =
 
     if debug then begin
       let ast_dot_file = open_out (Filename.chop_suffix file ".go" ^ "_ast.dot") in
-      Printf.fprintf ast_dot_file "%s" (Pretty.get_dot_ast f);
+      Printf.fprintf ast_dot_file "%s" (Pretty.get_dot_ast f (not !no_pretty));
       close_out ast_dot_file
     end;
 
     if !parse_only then exit 0;
-    let f = Typing.file f in
 
-    if type_only then exit 0;
-    let f = Rewrite.file ~debug f in
+    let f = Typing.file f in
 
     if debug then begin
       let ast_dot_file = open_out (Filename.chop_suffix file ".go" ^ "_tast.dot") in
-      Printf.fprintf ast_dot_file "%s" (Pretty.get_dot_tast f);
+      Printf.fprintf ast_dot_file "%s" (Pretty.get_dot_tast f (not !no_pretty));
       close_out ast_dot_file
     end;
+
+    if type_only then exit 0;
+    let f = Rewrite.file ~debug f in
 
     let code = Compile.file ~debug f in
     let c = open_out (Filename.chop_suffix file ".go" ^ ".s") in

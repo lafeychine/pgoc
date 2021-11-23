@@ -2,31 +2,40 @@ open Ast
 open Printf
 open Tast
 
+let is_pretty = ref true
+
 let fold_string f list = String.concat "" (List.map f list)
 let fold_children f list parent_id = fold_string (fun item -> f item parent_id) list
 
 let fold_hashtbl_children f hashtbl parent_id =
   fold_string (fun item -> f item parent_id) (Hashtbl.fold (fun k v acc -> (k, v) :: acc) hashtbl [])
 
-let get_node_id =
+let get_node_id, reset_node_id =
   let id = ref 0 in
-  fun name -> ( incr id; sprintf "%s_%d" name !id )
+  ( fun name -> ( incr id; sprintf "%s_%d" name !id ) ),
+  fun () -> id := 0
 
 let link_nodes id_from id_to = sprintf "%s -> %s\n" id_from id_to
 
 let html_attribute balise attribute name =  sprintf "<%s %s>%s</%s>" balise attribute name balise
 let html balise name = html_attribute balise "" name
 
-let draw_node id name fields children =
-  let colspan = sprintf "colspan = '%d'" (max 1 (List.length children)) in
-  let rowfield field = html "tr" (html_attribute "td" colspan field) in
-  let rowchild child = html_attribute "td" (sprintf "port='%s'" child) child in
-  let table = html_attribute "table" "border='0' cellborder='1' cellspacing='0' cellpadding='4'" (
-      html "tr" (html_attribute "td" colspan (html "b" name)) ^
-      ( if fields = [] then "" else fold_string rowfield fields ) ^
-      ( if children = [] then "" else html "tr" (fold_string rowchild children) )
-    )
-  in sprintf "%s [label=<%s>]\n" id table
+let draw_node id =
+  let draw_node_no_pretty id name fields children =
+    if fields = [] then "" else sprintf "%s:%s\n" id (String.concat "" fields) in
+
+  let draw_node_pretty id name fields children =
+    let colspan = sprintf "colspan = '%d'" (max 1 (List.length children)) in
+    let rowfield field = html "tr" (html_attribute "td" colspan field) in
+    let rowchild child = html_attribute "td" (sprintf "port='%s'" child) child in
+    let table = html_attribute "table" "border='0' cellborder='1' cellspacing='0' cellpadding='4'" (
+        html "tr" (html_attribute "td" colspan (html "b" name)) ^
+        ( if fields = [] then "" else fold_string rowfield fields ) ^
+        ( if children = [] then "" else html "tr" (fold_string rowchild children) )
+      )
+    in sprintf "%s [label=<%s>]\n" id table in
+
+  if !is_pretty then draw_node_pretty id else draw_node_no_pretty id
 
 let create_node parent_id name fields children =
   let node_id = get_node_id name in
@@ -34,6 +43,17 @@ let create_node parent_id name fields children =
   in draw_node node_id name fields node_children ^
      link_nodes parent_id node_id ^
      fold_string (fun (child, f) -> f (sprintf "%s:%s" node_id child)) children
+
+let draw_root_ast f =
+  reset_node_id ();
+  let ast = draw_node "root" "*" [] [] ^ f "root" in
+
+  if !is_pretty then
+    "digraph ast {\n" ^
+    "node [shape=plaintext];\n" ^
+    ast ^ "}"
+  else
+    ast
 
 
 let binop = function
@@ -170,12 +190,10 @@ let get_ast_pdecl pdecl parent_id =
       ("ps_fields", fold_children get_ast_pfield ps_fields)
     ]
 
-let get_dot_ast (_, pdecls) =
-  "digraph ast {\n" ^
-  "node [shape=plaintext];\n" ^
-  draw_node "root" "*" [] [] ^
-  fold_children get_ast_pdecl pdecls "root" ^
-  "}"
+let get_dot_ast (_, pdecls) flag_is_pretty =
+  is_pretty := flag_is_pretty;
+  draw_root_ast (fold_children get_ast_pdecl pdecls)
+
 
 
 let rec get_tast_typ typ parent_id =
@@ -308,9 +326,6 @@ let get_tast_tdecl tdecl parent_id =
       ("s_fields", fold_hashtbl_children (fun (_, field) -> get_tast_field field) s_fields)
     ]
 
-let get_dot_tast tdecls =
-  "digraph tast {\n" ^
-  "node [shape=plaintext];\n" ^
-  draw_node "root" "*" [] [] ^
-  fold_children get_tast_tdecl tdecls "root" ^
-  "}"
+let get_dot_tast tdecls flag_is_pretty =
+  is_pretty := flag_is_pretty;
+  draw_root_ast (fold_children get_tast_tdecl tdecls)
