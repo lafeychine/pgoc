@@ -17,6 +17,8 @@ module Context = struct
   let elem = M.mem
   let find = M.find_opt
   let get = M.find
+
+  let iter = M.iter
 end
 
 
@@ -78,7 +80,7 @@ let list_type = function
 (* NOTE Création d'une nouvelle variable *)
 let new_var =
   let id = ref 0 in
-  fun name loc typ ?(used=false) ->
+  fun name loc typ used ->
     incr id;
     { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used; v_addr = false }
 
@@ -97,9 +99,18 @@ and check_unreachable_expr loc rt (_, expr_rt) =
 let new_expr desc typ = { expr_desc = desc; expr_typ = typ }
 let new_stmt desc = new_expr desc Tvoid
 
-let rec expr env { pexpr_loc; pexpr_desc } = expr_desc env pexpr_loc pexpr_desc
-and expr_no_return env pexpr = let (expr, _) = expr env pexpr in expr
-and expr_desc env loc = function
+
+let rec expr structures functions env { pexpr_loc; pexpr_desc } =
+  expr_desc structures functions env pexpr_loc pexpr_desc
+
+and expr_no_return structures functions env pexpr =
+  let expr, _ = expr structures functions env pexpr in expr
+
+and expr_desc structures functions env loc pexpr_desc =
+  let expr = expr structures functions in
+  let expr_no_return = expr_no_return structures functions in
+
+  match pexpr_desc with
   | PEskip -> new_stmt TEskip, false
 
   | PEconstant c -> new_expr (TEconstant c) ( match c with
@@ -136,17 +147,18 @@ and expr_desc env loc = function
 
   | PEif (e1, e2, e3) ->
     let e1 = expr_no_return env e1 in
-    let (e2, rt_if) = expr env e2 in
-    let (e3, rt_else) = expr env e3 in
+    let e2, rt_if = expr env e2 in
+    let e3, rt_else = expr env e3 in
     ( match e3 with
       | { expr_desc = TEskip } -> new_stmt (TEif (e1, e2, e3)), rt_if
-      | _ -> new_stmt (TEif (e1, e2, e3)), rt_if && rt_else );
+      | _ -> new_stmt (TEif (e1, e2, e3)), rt_if && rt_else )
 
   | PEnil -> new_stmt TEnil, true
 
-  | PEident { id } -> assert false
-  (* (\* TODO *\) (try let v = Env.find id env in new_expr (TEident v) v.v_typ, false *)
-  (*             with Not_found -> error loc ("unbound variable " ^ id)) *)
+  | PEident { id; loc } ->
+    ( match Context.find id env with
+      | Some v -> new_expr (TEident v) v.v_typ, false
+      | None -> error (Some loc) ("Unbound variable " ^ id) )
 
   | PEdot (e, id) ->
     (* TODO *) assert false
@@ -157,14 +169,24 @@ and expr_desc env loc = function
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
   | PEblock el ->
-    let (expr_list, rt) = check_unreachable_expr_list (Some loc) (List.map (expr env) el) in
-    new_stmt (TEblock expr_list), rt
+    let expr_propagate_env env el =
+      let add_var_to_env env v = Context.add v.v_name v env in
+      let tast_expr, rt = expr env el in
+      let env = match tast_expr.expr_desc with
+        | TEvars var_list -> List.fold_left add_var_to_env env var_list
+        | _ -> env
+      in env, (tast_expr, rt) in
+
+    let _, expr_list = List.fold_left_map expr_propagate_env env el in
+    let expr_list, rt = check_unreachable_expr_list (Some loc) expr_list
+    in new_stmt (TEblock expr_list), rt
 
   | PEincdec (e, op) ->
     (* TODO *) assert false
 
-  | PEvars _ ->
-    (* TODO *) assert false
+  | PEvars (idents, ptyp, pexprs) ->
+    let declare_var ptyp { id; loc } = new_var id loc ptyp false in
+    new_stmt (TEvars (List.map (declare_var (Option.get (type_opt structures (Option.get ptyp)))) idents)), false
 
 
 (* 1. declare structures *)
@@ -205,7 +227,7 @@ let phase2 structures functions = function
     let fn_params =
       let param_to_var ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt structures type_param with
-        | Some typ -> new_var id_param loc_param typ ~used:false
+        | Some typ -> new_var id_param loc_param typ false
         | None -> error (Some loc_param) (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_ast_type_name type_param) id_param id)
       in List.map param_to_var pl in
 
@@ -251,7 +273,7 @@ let decl structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
     let { fn_name; fn_typ } as fn = Context.get id functions in
 
-    let (e, rt) = expr Context.create e in
+    let e, rt = expr structures functions Context.create e in
 
     (* NOTE Vérification de chacun des return *)
     ( let rec iter_return_stmt f { expr_desc } =
