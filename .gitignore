@@ -1,3 +1,6 @@
 pgoc
 _build/
 *.s
+
+*.dot
+*.svg
