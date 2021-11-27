@@ -308,5 +308,6 @@ let file (imp, dl) =
   (* Env.check_unused (); TODO variables non utilisees *)
 
   if imp && not !fmt_used then error None "fmt imported but not used";
+  if !fmt_used && not imp then error None "fmt used but not imported";
 
   dl
