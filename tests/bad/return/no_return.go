@@ -1,8 +1,8 @@
-package main;
+package main
 
 func f() int {}
 
-func main () {}
+func main() {}
 
 /*
 missing return at end of function
