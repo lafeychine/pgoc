@@ -3,9 +3,7 @@ open Lib
 open Ast
 open Tast
 
-let dummy_loc = Lexing.dummy_pos, Lexing.dummy_pos
-
-exception Error of Ast.location * string
+exception Error of Ast.location option * string
 
 let error loc e = raise (Error (loc, e))
 
@@ -49,7 +47,7 @@ let rec type_opt structures = function
       | Some struct_type -> Some (Tstruct struct_type)
       | None             -> None )
 
-  | PTptr ty -> ( match type_opt structures  ty with
+  | PTptr ty -> ( match type_opt structures ty with
       | Some sub_type -> Some (Tptr sub_type)
       | None         -> None )
 
@@ -124,10 +122,10 @@ and expr_desc env loc = function
   | PEcall ({ id = "new" }, [{ pexpr_desc = PEident { id } }]) ->
     let ty = match id with
       | "int" -> Tint | "bool" -> Tbool | "string" -> Tstring
-      | _ -> (* TODO *) error loc ("no such type " ^ id) in
+      | _ -> (* TODO *) error (Some loc) ("no such type " ^ id) in
     new_expr (TEnew ty) (Tptr ty), false
 
-  | PEcall ({ id = "new" }, _) -> error loc "new expects a type"
+  | PEcall ({ id = "new" }, _) -> error (Some loc) "new expects a type"
 
   | PEcall (id, el) ->
     (* TODO *) assert false
@@ -158,7 +156,7 @@ and expr_desc env loc = function
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
   | PEblock el ->
-    let (expr_list, rt) = check_unreachable_expr_list loc (List.map (expr env) el) in
+    let (expr_list, rt) = check_unreachable_expr_list (Some loc) (List.map (expr env) el) in
     new_stmt (TEblock expr_list), rt
 
   | PEincdec (e, op) ->
@@ -173,7 +171,7 @@ let phase1 structures = function
   | PDstruct { ps_name = { id; loc } } ->
     (* NOTE Vérification de l'unicité des noms de structures *)
     if Contexte.find id structures <> None then
-      error loc (Printf.sprintf "structure %s redeclared" id);
+      error (Some loc) (Printf.sprintf "structure %s redeclared" id);
 
     (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
     Contexte.add id { s_name = id; s_fields = Hashtbl.create 5 } structures
@@ -188,18 +186,18 @@ let phase2 (structures, functions) = function
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
     if id = "main" then (
       if pl <> [] || tyl <> [] then
-        error loc "func main must have no parameters and no return values";
+        error (Some loc) "func main must have no parameters and no return values";
       found_main := true );
 
     (* NOTE Vérification de l'unicité des noms de fonctions *)
     if Contexte.find id functions <> None then
-      error loc (Printf.sprintf "function %s redeclared" id);
+      error (Some loc) (Printf.sprintf "function %s redeclared" id);
 
     (* NOTE Vérification de l'unicité des noms des paramètres *)
     ( let is_same_identifier ({ id = id_x }, _) ({ id = id_y }, _) = id_x = id_y
       in match Lib.find_opt_duplicate_item is_same_identifier pl with
       | Some ({ id = id_param; loc = loc_param }, _) ->
-        error loc_param (Printf.sprintf "duplicate parameter %s in function %s" id_param id)
+        error (Some loc_param) (Printf.sprintf "duplicate parameter %s in function %s" id_param id)
       | None -> () );
 
     (* NOTE Vérification de la bonne formation de chacun des paramètres *)
@@ -207,7 +205,7 @@ let phase2 (structures, functions) = function
       let param_to_var ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt structures type_param with
         | Some typ -> new_var id_param loc_param typ ~used:false
-        | None -> error loc_param (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_ast_type_name type_param) id_param id)
+        | None -> error (Some loc_param) (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_ast_type_name type_param) id_param id)
       in List.map param_to_var pl in
 
     (* NOTE Vérification de la bonne formation de chacun des valeurs de retours *)
@@ -215,7 +213,7 @@ let phase2 (structures, functions) = function
       let get_type_return_value type_return_value =
         match type_opt structures type_return_value with
         | Some value -> value
-        | None -> error loc (Printf.sprintf "undefined type %s of one of return values in function %s" (get_ast_type_name type_return_value) id)
+        | None -> error (Some loc) (Printf.sprintf "undefined type %s of one of return values in function %s" (get_ast_type_name type_return_value) id)
       in list_type (List.map get_type_return_value tyl) in
 
     (structures, Contexte.add id { fn_name = id; fn_params; fn_typ } functions)
@@ -226,12 +224,12 @@ let phase2 (structures, functions) = function
     let process_struct_field ({ id = id_field; loc = loc_field }, type_field) =
       (* NOTE Vérification de l'unicité des champs de la structure *)
       if Hashtbl.find_opt s_fields id_field <> None then
-        error loc_field (Printf.sprintf "duplicate field %s in structure %s" id_field id);
+        error (Some loc_field) (Printf.sprintf "duplicate field %s in structure %s" id_field id);
 
       (* NOTE Vérification de la bonne formation du type *)
       let f_typ = match type_opt structures type_field with
         | Some f_typ -> f_typ;
-        | None -> error loc_field (Printf.sprintf "undefined type %s of field %s in structure %s" (get_ast_type_name type_field) id_field id) in
+        | None -> error (Some loc_field) (Printf.sprintf "undefined type %s of field %s in structure %s" (get_ast_type_name type_field) id_field id) in
 
       Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 } in
 
@@ -265,7 +263,7 @@ let decl structures functions = function
       let check_return_type { fn_name; fn_typ } return_values =
         let return_type = list_type (List.map (fun { expr_typ } -> expr_typ) return_values) in
         if not (eq_type fn_typ return_type) then
-          error loc
+          error (Some loc)
             (Printf.sprintf "bad return type %s, expected %s in function %s"
                (get_tast_type_name return_type) (get_tast_type_name fn_typ) fn_name)
 
@@ -274,7 +272,7 @@ let decl structures functions = function
     (* NOTE Vérification du branche du flot d'exécution *)
     ( match fn_typ, rt with
       | Tvoid, _ -> ()
-      | _, false -> error loc (Printf.sprintf "missing return at end of function %s" fn_name)
+      | _, false -> error (Some loc) (Printf.sprintf "missing return at end of function %s" fn_name)
       | _, _ -> () );
 
     TDfunction (fn, e)
@@ -293,7 +291,7 @@ let decl structures functions = function
         | _ -> inv in
 
       match get_recursive_struct_field structure [ id ] with
-      | Some { f_name } -> error loc (Printf.sprintf "recursive field %s in the struct %s" f_name id)
+      | Some { f_name } -> error (Some loc) (Printf.sprintf "recursive field %s in the struct %s" f_name id)
       | None -> ());
 
     TDstruct structure
@@ -303,12 +301,12 @@ let file (imp, dl) =
   let structures = List.fold_left phase1 Contexte.create dl in
   let structures, functions = List.fold_left phase2 (structures, Contexte.create) dl in
 
-  if not !found_main then error dummy_loc "missing method main";
+  if not !found_main then error None "missing method main";
 
   let dl = List.map (decl structures functions) dl in
 
   (* Env.check_unused (); TODO variables non utilisees *)
 
-  if imp && not !fmt_used then error dummy_loc "fmt imported but not used";
+  if imp && not !fmt_used then error None "fmt imported but not used";
 
   dl

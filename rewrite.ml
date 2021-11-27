@@ -57,11 +57,13 @@ open Tast
 
 let debug = ref false
 
+let dummy_loc = Lexing.dummy_pos, Lexing.dummy_pos
+
 let mkvar =
   let c = ref 0 in
   fun ty ->
     incr c;
-    Typing.new_var ("aux" ^ string_of_int !c) Typing.dummy_loc ~used:true ty
+    Typing.new_var ("aux" ^ string_of_int !c) dummy_loc ~used:true ty
 
 let make = Typing.new_expr
 let stmt = Typing.new_stmt

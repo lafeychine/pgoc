@@ -33,11 +33,14 @@ let file =
 let debug = !debug
 let type_only = !type_only
 
-let report_loc (b,e) =
-  let l = b.pos_lnum in
-  let fc = b.pos_cnum - b.pos_bol in
-  let lc = e.pos_cnum - b.pos_bol in
-  eprintf "File \"%s\", line %d, characters %d-%d:\n" file l fc lc
+let report_loc loc =
+  match loc with
+  | Some (b, e) ->
+    let l = b.pos_lnum in
+    let fc = b.pos_cnum - b.pos_bol in
+    let lc = e.pos_cnum - b.pos_bol in
+    eprintf "File \"%s\", line %d, characters %d-%d:\n" file l fc lc
+  | None -> eprintf "File \"%s\":\n" file
 
 let () =
   let c = open_in file in
@@ -72,20 +75,20 @@ let () =
     close_out c
   with
   | Lexer.Lexing_error s ->
-    report_loc (lexeme_start_p lb, lexeme_end_p lb);
+    report_loc (Some (lexeme_start_p lb, lexeme_end_p lb));
     eprintf "lexical error: %s\n@." s;
     exit 1
+
   | Parser.Error ->
-    report_loc (lexeme_start_p lb, lexeme_end_p lb);
+    report_loc (Some (lexeme_start_p lb, lexeme_end_p lb));
     eprintf "syntax error\n@.";
     exit 1
+
   | Typing.Error (l, msg) ->
     report_loc l;
     eprintf "error: %s\n@." msg;
     exit 1
+
   | e ->
     eprintf "Anomaly: %s\n@." (Printexc.to_string e);
     exit 2
-
-
-
