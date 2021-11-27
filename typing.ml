@@ -9,12 +9,14 @@ let error loc e = raise (Error (loc, e))
 
 
 (* NOTE Créations des contextes *)
-module Contexte = struct
+module Context = struct
   module M = Map.Make(String)
 
   let add = M.add
   let create = M.empty
+  let elem = M.mem
   let find = M.find_opt
+  let get = M.find
 end
 
 
@@ -43,7 +45,7 @@ let rec type_opt structures = function
   | PTident { id = "bool" } -> Some Tbool
   | PTident { id = "string" } -> Some Tstring
 
-  | PTident { id } -> ( match Contexte.find id structures with
+  | PTident { id } -> ( match Context.find id structures with
       | Some struct_type -> Some (Tstruct struct_type)
       | None             -> None )
 
@@ -117,7 +119,6 @@ and expr_desc env loc = function
   | PEcall ({ id = "fmt.Print" }, args) ->
     fmt_used := true;
     new_stmt (TEprint (List.map (expr_no_return env) args)), false
-  (* TODO Contraindre aux types int bool string ptr *)
 
   | PEcall ({ id = "new" }, [{ pexpr_desc = PEident { id } }]) ->
     let ty = match id with
@@ -170,18 +171,18 @@ and expr_desc env loc = function
 let phase1 structures = function
   | PDstruct { ps_name = { id; loc } } ->
     (* NOTE Vérification de l'unicité des noms de structures *)
-    if Contexte.find id structures <> None then
+    if Context.elem id structures then
       error (Some loc) (Printf.sprintf "structure %s redeclared" id);
 
     (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
-    Contexte.add id { s_name = id; s_fields = Hashtbl.create 5 } structures
+    Context.add id { s_name = id; s_fields = Hashtbl.create 5 } structures
 
 
   | _ -> structures
 
 
 (* 2. declare functions and type fields *)
-let phase2 (structures, functions) = function
+let phase2 structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_params = pl; pf_typ = tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
     if id = "main" then (
@@ -190,7 +191,7 @@ let phase2 (structures, functions) = function
       found_main := true );
 
     (* NOTE Vérification de l'unicité des noms de fonctions *)
-    if Contexte.find id functions <> None then
+    if Context.elem id functions then
       error (Some loc) (Printf.sprintf "function %s redeclared" id);
 
     (* NOTE Vérification de l'unicité des noms des paramètres *)
@@ -216,14 +217,14 @@ let phase2 (structures, functions) = function
         | None -> error (Some loc) (Printf.sprintf "undefined type %s of one of return values in function %s" (get_ast_type_name type_return_value) id)
       in list_type (List.map get_type_return_value tyl) in
 
-    (structures, Contexte.add id { fn_name = id; fn_params; fn_typ } functions)
+    Context.add id { fn_name = id; fn_params; fn_typ } functions
 
   | PDstruct { ps_name = { id }; ps_fields = fl } ->
-    let { s_fields } as structure = Option.get (Contexte.find id structures) in
+    let { s_fields } as structure = Context.get id structures in
 
     let process_struct_field ({ id = id_field; loc = loc_field }, type_field) =
       (* NOTE Vérification de l'unicité des champs de la structure *)
-      if Hashtbl.find_opt s_fields id_field <> None then
+      if Hashtbl.mem s_fields id_field then
         error (Some loc_field) (Printf.sprintf "duplicate field %s in structure %s" id_field id);
 
       (* NOTE Vérification de la bonne formation du type *)
@@ -234,7 +235,7 @@ let phase2 (structures, functions) = function
       Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 } in
 
     List.iter process_struct_field fl;
-    (structures, functions)
+    functions
 
 
 (* 3. type check function bodies *)
@@ -248,9 +249,9 @@ let rec sizeof = function
 
 let decl structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
-    let { fn_name; fn_typ } as fn = Option.get (Contexte.find id functions) in
+    let { fn_name; fn_typ } as fn = Context.get id functions in
 
-    let (e, rt) = expr Contexte.create e in
+    let (e, rt) = expr Context.create e in
 
     (* NOTE Vérification de chacun des return *)
     ( let rec iter_return_stmt f { expr_desc } =
@@ -278,7 +279,7 @@ let decl structures functions = function
     TDfunction (fn, e)
 
   | PDstruct { ps_name = { id; loc } } ->
-    let structure = Option.get (Contexte.find id structures) in
+    let structure = Context.get id structures in
 
     ( let rec get_recursive_struct_field { s_fields } acc =
         Seq.fold_left (find_recursive_struct_field acc) None (Hashtbl.to_seq_values s_fields)
@@ -298,8 +299,8 @@ let decl structures functions = function
 
 
 let file (imp, dl) =
-  let structures = List.fold_left phase1 Contexte.create dl in
-  let structures, functions = List.fold_left phase2 (structures, Contexte.create) dl in
+  let structures = List.fold_left phase1 Context.create dl in
+  let functions = List.fold_left (phase2 structures) Context.create dl in
 
   if not !found_main then error None "missing method main";
 

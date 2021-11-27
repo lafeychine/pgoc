@@ -65,6 +65,9 @@ function compareFiles()
 }
 
 
+launchTest "bad/fmt/unused_fmt"
+launchTest "bad/fmt/unimported_fmt"
+
 launchTest "bad/func/multiple_func_def"
 launchTest "bad/func/multiple_param_func_def"
 launchTest "bad/func/unknown_param_func_type"
