@@ -92,6 +92,7 @@ launchTest "bad/struct/mutually_recursive_struct_def"
 launchTest "bad/struct/recursive_struct_def"
 launchTest "bad/struct/unknown_field_struct"
 
+launchTest "bad/vars/unbound"
 launchTest "bad/vars/unused"
 launchTest "bad/vars/unused_block"
 
