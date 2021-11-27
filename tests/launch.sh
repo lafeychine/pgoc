@@ -68,6 +68,11 @@ function compareFiles()
 launchTest "bad/fmt/unused_fmt"
 launchTest "bad/fmt/unimported_fmt"
 
+launchTest "bad/dot/non_identifier"
+launchTest "bad/dot/nul_struct"
+launchTest "bad/dot/on_non_struct"
+launchTest "bad/dot/unknown_field_struct"
+
 launchTest "bad/func/multiple_func_def"
 launchTest "bad/func/multiple_param_func_def"
 launchTest "bad/func/unknown_param_func_type"
@@ -83,9 +88,10 @@ launchTest "bad/return/bad_return_type"
 
 launchTest "bad/struct/multiple_struct_def"
 launchTest "bad/struct/multiple_fields_struct_def"
-launchTest "bad/struct/mutually_recursive_struct"
-launchTest "bad/struct/recursive_struct"
+launchTest "bad/struct/mutually_recursive_struct_def"
+launchTest "bad/struct/recursive_struct_def"
 launchTest "bad/struct/unknown_field_struct"
+
 
 launchTest "good/print/string"
 
