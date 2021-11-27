@@ -1,4 +1,3 @@
-open Format
 open Lib
 open Ast
 open Tast
@@ -160,11 +159,27 @@ and expr_desc structures functions env loc pexpr_desc =
       | Some v -> new_expr (TEident v) v.v_typ, false
       | None -> error (Some loc) ("Unbound variable " ^ id) )
 
-  | PEdot (e, id) ->
-    (* TODO *) assert false
+  | PEdot (e, { id; loc }) ->
+    let tast_expr, rt = expr env e in
+    let typ, structure = match tast_expr.expr_desc with
+      | TEident { v_typ } -> ( match v_typ with
+          | Tstruct { s_name } -> v_typ, Context.get s_name structures
+          | _ -> error (Some loc)
+                   (Printf.sprintf "Type %s is not a structure" (get_tast_type_name v_typ)))
+
+      | TEnil -> error (Some loc) "Use of untyped nil"
+      | _ -> error (Some loc) "Use of dot syntax on a non-identifier" in
+
+    ( match Hashtbl.find_opt structure.s_fields id with
+      | Some field -> new_expr (TEdot (tast_expr, field)) typ, rt
+      | None -> error (Some loc)
+                  (Printf.sprintf "Type %s has no field %s" (get_tast_type_name typ) id))
+
 
   | PEassign (lvl, el) ->
-    (* TODO *) new_stmt (TEassign ([], [])), false
+    let left = List.map (expr_no_return env) lvl in
+    let right = List.map (expr_no_return env) el in
+    new_stmt (TEassign (left, right)), false
 
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
