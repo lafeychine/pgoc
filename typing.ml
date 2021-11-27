@@ -14,11 +14,16 @@ module Context = struct
 
   let add = M.add
   let create = M.empty
-  let elem = M.mem
-  let find = M.find_opt
-  let get = M.find
 
-  let iter = M.iter
+  let elem = M.mem
+  let get = M.find
+  let search = M.find_opt
+
+  let find f m =
+    let filter k v = function
+      | Some (k, v) -> Some (k, v)
+      | None -> if f k v then Some (k, v) else None
+    in M.fold filter m None
 end
 
 
@@ -47,7 +52,7 @@ let rec type_opt structures = function
   | PTident { id = "bool" } -> Some Tbool
   | PTident { id = "string" } -> Some Tstring
 
-  | PTident { id } -> ( match Context.find id structures with
+  | PTident { id } -> ( match Context.search id structures with
       | Some struct_type -> Some (Tstruct struct_type)
       | None             -> None )
 
@@ -156,8 +161,9 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEnil -> new_stmt TEnil, true
 
   | PEident { id; loc } ->
-    ( match Context.find id env with
-      | Some v -> new_expr (TEident v) v.v_typ, false
+    ( match Context.search id env with
+      | Some v -> ( v.v_used <- true;
+                    new_expr (TEident v) v.v_typ, false )
       | None -> error (Some loc) ("Unbound variable " ^ id) )
 
   | PEdot (e, { id; loc }) ->
@@ -193,9 +199,16 @@ and expr_desc structures functions env loc pexpr_desc =
         | _ -> env
       in env, (tast_expr, rt) in
 
-    let _, expr_list = List.fold_left_map expr_propagate_env env el in
-    let expr_list, rt = check_unreachable_expr_list (Some loc) expr_list
-    in new_stmt (TEblock expr_list), rt
+    let env, expr_list = List.fold_left_map expr_propagate_env env el in
+    let expr_list, rt = check_unreachable_expr_list (Some loc) expr_list in
+
+    (* NOTE Vérification des variables non utilisées *)
+    ( match Context.find (fun _ { v_used } -> not v_used) env with
+      | Some (_, { v_name; v_loc }) ->
+        error (Some v_loc) (sprintf "%s declared but not used" v_name)
+      | None -> () );
+
+    new_stmt (TEblock expr_list), rt
 
 
   | PEincdec (e, op) ->
@@ -351,8 +364,6 @@ let file (imp, dl) =
   if not !found_main then error None "missing method main";
 
   let dl = List.map (decl structures functions) dl in
-
-  (* Env.check_unused (); TODO variables non utilisees *)
 
   if imp && not !fmt_used then error None "fmt imported but not used";
   if !fmt_used && not imp then error None "fmt used but not imported";
