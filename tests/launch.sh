@@ -88,3 +88,5 @@ launchTest "bad/struct/recursive_struct"
 launchTest "bad/struct/unknown_field_struct"
 
 launchTest "good/print/string"
+
+launchTest "good/vars/declare"
