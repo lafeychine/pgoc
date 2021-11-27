@@ -22,7 +22,7 @@ let html balise name = html_attribute balise "" name
 
 let draw_node id =
   let draw_node_no_pretty id name fields children =
-    if fields = [] then "" else sprintf "%s:%s\n" id (String.concat "" fields) in
+    if fields = [] then "" else sprintf "%s:%s\n" id (String.concat "; " fields) in
 
   let draw_node_pretty id name fields children =
     let colspan = sprintf "colspan = '%d'" (max 1 (List.length children)) in

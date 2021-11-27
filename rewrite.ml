@@ -63,7 +63,7 @@ let mkvar =
   let c = ref 0 in
   fun ty ->
     incr c;
-    Typing.new_var ("aux" ^ string_of_int !c) dummy_loc ~used:true ty
+    Typing.new_var ("aux" ^ string_of_int !c) dummy_loc ty true
 
 let make = Typing.new_expr
 let stmt = Typing.new_stmt
