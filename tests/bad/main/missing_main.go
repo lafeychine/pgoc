@@ -6,6 +6,6 @@ func f() int {
 
 /*
 == Expected compiler output ==
-File "./tests/bad/main/missing_main.go", line 0, characters -1--1:
+File "./tests/bad/main/missing_main.go":
 error: missing method main
 */

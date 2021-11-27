@@ -32,6 +32,7 @@ function launchTest()
                      "./tests/$1_tast.dot" \
                      <(awk "/${MSG_EXPECTED_TAST}/,0" "${CALL_PATH}/$1.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
 
+        rm -f "./tests/$1_ast.dot"
         rm -f "./tests/$1_tast.dot"
 
     fi
