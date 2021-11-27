@@ -1,5 +1,6 @@
-open Lib
 open Ast
+open Lib
+open Printf
 open Tast
 
 exception Error of Ast.location option * string
@@ -165,7 +166,7 @@ and expr_desc structures functions env loc pexpr_desc =
       | TEident { v_typ } -> ( match v_typ with
           | Tstruct { s_name } -> v_typ, Context.get s_name structures
           | _ -> error (Some loc)
-                   (Printf.sprintf "Type %s is not a structure" (get_tast_type_name v_typ)))
+                   (sprintf "Type %s is not a structure" (get_tast_type_name v_typ)))
 
       | TEnil -> error (Some loc) "Use of untyped nil"
       | _ -> error (Some loc) "Use of dot syntax on a non-identifier" in
@@ -173,7 +174,7 @@ and expr_desc structures functions env loc pexpr_desc =
     ( match Hashtbl.find_opt structure.s_fields id with
       | Some field -> new_expr (TEdot (tast_expr, field)) typ, rt
       | None -> error (Some loc)
-                  (Printf.sprintf "Type %s has no field %s" (get_tast_type_name typ) id))
+                  (sprintf "Type %s has no field %s" (get_tast_type_name typ) id))
 
 
   | PEassign (lvl, el) ->
@@ -196,6 +197,7 @@ and expr_desc structures functions env loc pexpr_desc =
     let expr_list, rt = check_unreachable_expr_list (Some loc) expr_list
     in new_stmt (TEblock expr_list), rt
 
+
   | PEincdec (e, op) ->
     (* TODO *) assert false
 
@@ -209,7 +211,7 @@ let phase1 structures = function
   | PDstruct { ps_name = { id; loc } } ->
     (* NOTE Vérification de l'unicité des noms de structures *)
     if Context.elem id structures then
-      error (Some loc) (Printf.sprintf "structure %s redeclared" id);
+      error (Some loc) (sprintf "structure %s redeclared" id);
 
     (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
     Context.add id { s_name = id; s_fields = Hashtbl.create 5 } structures
@@ -229,13 +231,13 @@ let phase2 structures functions = function
 
     (* NOTE Vérification de l'unicité des noms de fonctions *)
     if Context.elem id functions then
-      error (Some loc) (Printf.sprintf "function %s redeclared" id);
+      error (Some loc) (sprintf "function %s redeclared" id);
 
     (* NOTE Vérification de l'unicité des noms des paramètres *)
     ( let is_same_identifier ({ id = id_x }, _) ({ id = id_y }, _) = id_x = id_y
       in match Lib.find_opt_duplicate_item is_same_identifier pl with
       | Some ({ id = id_param; loc = loc_param }, _) ->
-        error (Some loc_param) (Printf.sprintf "duplicate parameter %s in function %s" id_param id)
+        error (Some loc_param) (sprintf "duplicate parameter %s in function %s" id_param id)
       | None -> () );
 
     (* NOTE Vérification de la bonne formation de chacun des paramètres *)
@@ -243,7 +245,9 @@ let phase2 structures functions = function
       let param_to_var ({ id = id_param; loc = loc_param }, type_param) =
         match type_opt structures type_param with
         | Some typ -> new_var id_param loc_param typ false
-        | None -> error (Some loc_param) (Printf.sprintf "undefined type %s of parameter %s in function %s" (get_ast_type_name type_param) id_param id)
+        | None -> error (Some loc_param)
+                    (sprintf "undefined type %s of parameter %s in function %s"
+                       (get_ast_type_name type_param) id_param id)
       in List.map param_to_var pl in
 
     (* NOTE Vérification de la bonne formation de chacun des valeurs de retours *)
@@ -251,7 +255,9 @@ let phase2 structures functions = function
       let get_type_return_value type_return_value =
         match type_opt structures type_return_value with
         | Some value -> value
-        | None -> error (Some loc) (Printf.sprintf "undefined type %s of one of return values in function %s" (get_ast_type_name type_return_value) id)
+        | None -> error (Some loc)
+                    (sprintf "undefined type %s of one of return values in function %s"
+                       (get_ast_type_name type_return_value) id)
       in list_type (List.map get_type_return_value tyl) in
 
     Context.add id { fn_name = id; fn_params; fn_typ } functions
@@ -262,12 +268,14 @@ let phase2 structures functions = function
     let process_struct_field ({ id = id_field; loc = loc_field }, type_field) =
       (* NOTE Vérification de l'unicité des champs de la structure *)
       if Hashtbl.mem s_fields id_field then
-        error (Some loc_field) (Printf.sprintf "duplicate field %s in structure %s" id_field id);
+        error (Some loc_field) (sprintf "duplicate field %s in structure %s" id_field id);
 
       (* NOTE Vérification de la bonne formation du type *)
       let f_typ = match type_opt structures type_field with
         | Some f_typ -> f_typ;
-        | None -> error (Some loc_field) (Printf.sprintf "undefined type %s of field %s in structure %s" (get_ast_type_name type_field) id_field id) in
+        | None -> error (Some loc_field)
+                    (sprintf "undefined type %s of field %s in structure %s"
+                       (get_ast_type_name type_field) id_field id) in
 
       Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 } in
 
@@ -302,7 +310,7 @@ let decl structures functions = function
         let return_type = list_type (List.map (fun { expr_typ } -> expr_typ) return_values) in
         if not (eq_type fn_typ return_type) then
           error (Some loc)
-            (Printf.sprintf "bad return type %s, expected %s in function %s"
+            (sprintf "bad return type %s, expected %s in function %s"
                (get_tast_type_name return_type) (get_tast_type_name fn_typ) fn_name)
 
       in iter_return_stmt (check_return_type fn) e );
@@ -310,7 +318,7 @@ let decl structures functions = function
     (* NOTE Vérification du branche du flot d'exécution *)
     ( match fn_typ, rt with
       | Tvoid, _ -> ()
-      | _, false -> error (Some loc) (Printf.sprintf "missing return at end of function %s" fn_name)
+      | _, false -> error (Some loc) (sprintf "missing return at end of function %s" fn_name)
       | _, _ -> () );
 
     TDfunction (fn, e)
@@ -329,7 +337,8 @@ let decl structures functions = function
         | _ -> inv in
 
       match get_recursive_struct_field structure [ id ] with
-      | Some { f_name } -> error (Some loc) (Printf.sprintf "recursive field %s in the struct %s" f_name id)
+      | Some { f_name } ->
+        error (Some loc) (sprintf "recursive field %s in the struct %s" f_name id)
       | None -> ());
 
     TDstruct structure
