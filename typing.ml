@@ -58,7 +58,7 @@ let rec type_opt structures = function
 
   | PTptr ty -> ( match type_opt structures ty with
       | Some sub_type -> Some (Tptr sub_type)
-      | None         -> None )
+      | None          -> None )
 
 
 (* NOTE Comparaison de deux types *)
@@ -70,7 +70,7 @@ let rec eq_type ty1 ty2 =
 
   | Tptr ty1, Tptr ty2 -> eq_type ty1 ty2
 
-  | Tmany ty1, Tmany ty2 -> List.for_all2 (eq_type) ty1 ty2
+  | Tmany ty1, Tmany ty2 -> List.for_all2 eq_type ty1 ty2
 
   | _ -> false
 
@@ -158,7 +158,7 @@ and expr_desc structures functions env loc pexpr_desc =
       | { expr_desc = TEskip } -> new_stmt (TEif (e1, e2, e3)), rt_if
       | _ -> new_stmt (TEif (e1, e2, e3)), rt_if && rt_else )
 
-  | PEnil -> new_stmt TEnil, true
+  | PEnil -> new_stmt TEnil, false
 
   | PEident { id; loc } ->
     ( match Context.search id env with
@@ -182,7 +182,6 @@ and expr_desc structures functions env loc pexpr_desc =
       | None -> error (Some loc)
                   (sprintf "Type %s has no field %s" (get_tast_type_name typ) id))
 
-
   | PEassign (lvl, el) ->
     let left = List.map (expr_no_return env) lvl in
     let right = List.map (expr_no_return env) el in
@@ -194,8 +193,9 @@ and expr_desc structures functions env loc pexpr_desc =
     let expr_propagate_env env el =
       let add_var_to_env env v = Context.add v.v_name v env in
       let tast_expr, rt = expr env el in
-      let env = match tast_expr.expr_desc with
-        | TEvars var_list -> List.fold_left add_var_to_env env var_list
+      let env = match el.pexpr_desc, tast_expr.expr_desc with
+        | PEvars _, TEblock ({ expr_desc = TEvars var_list} :: _)
+        | PEvars _, TEvars var_list -> List.fold_left add_var_to_env env var_list
         | _ -> env
       in env, (tast_expr, rt) in
 
@@ -216,7 +216,53 @@ and expr_desc structures functions env loc pexpr_desc =
 
   | PEvars (idents, ptyp, pexprs) ->
     let declare_var ptyp { id; loc } = new_var id loc ptyp false in
-    new_stmt (TEvars (List.map (declare_var (Option.get (type_opt structures (Option.get ptyp)))) idents)), false
+
+    let get_typ ptyp =
+      match type_opt structures ptyp with
+      | Some ptyp -> ptyp
+      | None -> error (Some loc)
+                  (sprintf "undefined type %s of variable declaration" (get_ast_type_name ptyp)) in
+
+    let var_expr =
+      match ptyp, pexprs with
+      (* | Some ptyp, [ { pexpr_desc = PEcall _ } ] -> () *)
+      (* | None, [ { pexpr_desc = PEcall _ } ] -> () *)
+
+      | Some ptyp, [] -> TEvars(List.map (declare_var (get_typ ptyp)) idents)
+
+      | Some ptyp, pexprs ->
+        let typ = get_typ ptyp in
+        let check_type var_typ expr_typ =
+          if not (eq_type var_typ expr_typ) then
+            error (Some loc)
+              (sprintf "cannot use type %s as type %s in assignment"
+                 (get_tast_type_name expr_typ) (get_tast_type_name var_typ)) in
+
+        if List.length idents <> List.length pexprs then
+          error (Some loc)
+            (sprintf "assignment mismatch: %d variables but %d values"
+               (List.length idents) (List.length pexprs));
+
+        let exprs = List.map (expr_no_return env) pexprs in
+        let vars = List.map2 (fun { expr_typ } -> check_type typ expr_typ; declare_var expr_typ) exprs idents in
+        let idents = List.map (fun x -> new_stmt (TEident x)) vars in
+
+        TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
+
+
+      | None, xs ->
+        if List.length idents <> List.length pexprs then
+          error (Some loc)
+            (sprintf "assignment mismatch: %d variables but %d values"
+               (List.length idents) (List.length pexprs));
+
+        let exprs = List.map (expr_no_return env) pexprs in
+        let vars = List.map2 (fun { expr_typ } -> declare_var expr_typ) exprs idents in
+        let idents = List.map (fun x -> new_stmt (TEident x)) vars in
+
+        TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
+
+    in new_stmt var_expr, false
 
 
 (* 1. declare structures *)
