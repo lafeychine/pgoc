@@ -7,33 +7,33 @@ MSG_EXPECTED_TAST="== Expected TAST =="
 PGOC="./pgoc --no-pretty"
 
 
-# void launchTest(String folderPath)
+# void launchTest(String filePath)
 function launchTest()
 {
-    echo "Launch $1:"
+    FILEPATH="${1%".go"}"
 
-    if [[ $(grep "${MSG_EXPECTED_COMPILER}" "./tests/$1.go") ]]
-    then
+    echo "Launch ${FILEPATH#"${CALL_PATH}/"}:"
+
+    if grep -q "${MSG_EXPECTED_COMPILER}" "$1"; then
 
         compareFiles "Compiler output" \
-                     <(${PGOC} --type-only "./tests/$1.go" 2>&1) \
-                     <(awk "/${MSG_EXPECTED_COMPILER}/,0" "${CALL_PATH}/$1.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+                     <(${PGOC} --type-only "$1" 2>&1) \
+                     <(awk "/${MSG_EXPECTED_COMPILER}/,0" "$1" | awk "1;/*\//{exit}" | sed -e '1d;$d')
 
     fi
 
-    if [[ $(grep "${MSG_EXPECTED_TAST}" "./tests/$1.go") ]]
-    then
+    if grep -q "${MSG_EXPECTED_TAST}" "$1"; then
 
         compareFiles "No error" \
-                     <(${PGOC} --debug --type-only "./tests/$1.go" 2>&1) \
+                     <(${PGOC} --debug --type-only "$1" 2>&1) \
                      <(echo -ne "")
 
         compareFiles "TAST output" \
-                     "./tests/$1_tast.dot" \
-                     <(awk "/${MSG_EXPECTED_TAST}/,0" "${CALL_PATH}/$1.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+                     "${FILEPATH}_tast.dot" \
+                     <(awk "/${MSG_EXPECTED_TAST}/,0" "${FILEPATH}.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
 
-        rm -f "./tests/$1_ast.dot"
-        rm -f "./tests/$1_tast.dot"
+        rm -f "${FILEPATH}_ast.dot"
+        rm -f "${FILEPATH}_tast.dot"
 
     fi
 
@@ -46,9 +46,7 @@ function compareFiles()
 {
     echo -ne " - $1: "
 
-    DIFF_OUTPUT=$(diff -Bw "$2" "$3")
-
-    if [[ $? -eq 0 ]]; then
+    if DIFF_OUTPUT=$(diff -Bw "$2" "$3"); then
 
         tput setaf 2; echo -n "OK"; tput setaf 7
 
@@ -59,48 +57,19 @@ function compareFiles()
         echo ""
         echo "${DIFF_OUTPUT[0]}"
 
+	    FAILED_TEST=true
+
     fi
 
     echo ""
 }
 
 
-launchTest "bad/fmt/unused_fmt"
-launchTest "bad/fmt/unimported_fmt"
+find "${CALL_PATH}" -name "*.go" -print0 |
+	while IFS= read -r -d '' FILE; do
 
-launchTest "bad/dot/non_identifier"
-launchTest "bad/dot/nul_struct"
-launchTest "bad/dot/on_non_struct"
-launchTest "bad/dot/unknown_field_struct"
+		launchTest "${FILE}"
 
-launchTest "bad/func/multiple_func_def"
-launchTest "bad/func/multiple_param_func_def"
-launchTest "bad/func/unknown_param_func_type"
-launchTest "bad/func/unknown_return_value_func_type"
+		[[ -n ${FAILED_TEST} ]] && exit 1;
 
-launchTest "bad/main/missing_main"
-launchTest "bad/main/parameters_main"
-launchTest "bad/main/return_value_main"
-
-launchTest "bad/return/stmt_after_return"
-launchTest "bad/return/stmt_after_return_block"
-launchTest "bad/return/bad_return_type"
-
-launchTest "bad/struct/multiple_struct_def"
-launchTest "bad/struct/multiple_fields_struct_def"
-launchTest "bad/struct/mutually_recursive_struct_def"
-launchTest "bad/struct/recursive_struct_def"
-launchTest "bad/struct/unknown_field_struct"
-
-launchTest "bad/vars/bad_unpack"
-launchTest "bad/vars/incompatible_types"
-launchTest "bad/vars/unbound"
-launchTest "bad/vars/unknown_type"
-launchTest "bad/vars/unused"
-launchTest "bad/vars/unused_block"
-
-
-launchTest "good/print/string"
-
-launchTest "good/vars/declare"
-launchTest "good/vars/declare_struct"
+	done

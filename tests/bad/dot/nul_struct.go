@@ -7,5 +7,5 @@ func main() {
 /*
 == Expected compiler output ==
 File "./tests/bad/dot/nul_struct.go", line 4, characters 5-6:
-error: Use of untyped nil
+error: use of untyped nil
 */

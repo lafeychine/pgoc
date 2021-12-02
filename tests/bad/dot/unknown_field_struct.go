@@ -13,5 +13,5 @@ func main() {
 /*
 == Expected compiler output ==
 File "./tests/bad/dot/unknown_field_struct.go", line 10, characters 3-4:
-error: Type A has no field y
+error: type A has no field y
 */
