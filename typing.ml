@@ -101,10 +101,13 @@ and check_unreachable_expr loc rt (_, expr_rt) =
   | _, true -> error loc "block contains unreachable code"
 
 
+
+(* NOTE Création d'un expr à partir d'un expr_desc *)
 let new_expr desc typ = { expr_desc = desc; expr_typ = typ }
 let new_stmt desc = new_expr desc Tvoid
 
 
+(* NOTE Transformation de chaque élément d'AST en TAST *)
 let rec expr structures functions env { pexpr_loc; pexpr_desc } =
   expr_desc structures functions env pexpr_loc pexpr_desc
 
@@ -118,10 +121,12 @@ and expr_desc structures functions env loc pexpr_desc =
   match pexpr_desc with
   | PEskip -> new_stmt TEskip, false
 
-  | PEconstant c -> new_expr (TEconstant c) ( match c with
+  | PEconstant c ->
+    let constant = match c with
       | Cbool _ -> Tbool
       | Cint _ -> Tint
-      | Cstring _ -> Tstring ), false
+      | Cstring _ -> Tstring
+    in new_expr (TEconstant c) constant, false
 
   | PEbinop (op, e1, e2) ->
     (* TODO *) assert false
@@ -136,16 +141,43 @@ and expr_desc structures functions env loc pexpr_desc =
     fmt_used := true;
     new_stmt (TEprint (List.map (expr_no_return env) args)), false
 
-  | PEcall ({ id = "new" }, [{ pexpr_desc = PEident { id } }]) ->
-    let ty = match id with
-      | "int" -> Tint | "bool" -> Tbool | "string" -> Tstring
-      | _ -> (* TODO *) error (Some loc) ("no such type " ^ id) in
-    new_expr (TEnew ty) (Tptr ty), false
+  | PEcall ({ id = "new" }, [{ pexpr_desc = PEident { id; loc } }]) ->
+    let typ =
+      match type_opt structures (PTident { id; loc }) with
+      | Some typ -> typ
+      | None -> error (Some loc) (sprintf "cannot allocate an unknown type %s" id)
+    in new_expr (TEnew typ) (Tptr typ), false
 
-  | PEcall ({ id = "new" }, _) -> error (Some loc) "new expects a type"
+  | PEcall ({ id = "new" }, _) -> error (Some loc) "new expects exactly one type"
 
-  | PEcall (id, el) ->
-    (* TODO *) assert false
+  | PEcall ({ id; loc }, el) ->
+    (* NOTE Vérification de l'existence de la fonction *)
+    let func =
+      match Context.search id functions with
+      | Some func -> func
+      | None -> error (Some loc) (sprintf "call to unknown function %s" id) in
+
+    (* NOTE Vérification entre le nombre de paramètres et d'arguments de la fonction *)
+    if List.length el <> List.length func.fn_params then
+      error (Some loc)
+        (sprintf "incorrect number of arguments in call to foo: %d arguments but %d parameters"
+           (List.length el) (List.length func.fn_params));
+
+    (* NOTE Construction de chacune des expressions *)
+    let expr_list = List.map (expr_no_return env) el in
+
+    (* NOTE Vérification du type entre les paramètres et les arguments *)
+    let check_type var_typ expr_typ =
+      if not (eq_type var_typ expr_typ) then
+        error (Some loc)
+          (sprintf "cannot use type %s as type %s in argument to %s"
+             (get_tast_type_name expr_typ) (get_tast_type_name var_typ) id) in
+
+    List.iter2 (fun { v_typ } { expr_typ } -> check_type v_typ expr_typ) func.fn_params expr_list;
+
+    (* NOTE Convertion finale en TEcall *)
+    new_expr (TEcall (func, expr_list)) func.fn_typ, false
+
 
   | PEfor (e, b) ->
     (* TODO *) assert false
@@ -164,7 +196,7 @@ and expr_desc structures functions env loc pexpr_desc =
     ( match Context.search id env with
       | Some v -> ( v.v_used <- true;
                     new_expr (TEident v) v.v_typ, false )
-      | None -> error (Some loc) ("Unbound variable " ^ id) )
+      | None -> error (Some loc) ("unbound variable " ^ id) )
 
   | PEdot (e, { id; loc }) ->
     let tast_expr, rt = expr env e in
@@ -172,15 +204,15 @@ and expr_desc structures functions env loc pexpr_desc =
       | TEident { v_typ } -> ( match v_typ with
           | Tstruct { s_name } -> v_typ, Context.get s_name structures
           | _ -> error (Some loc)
-                   (sprintf "Type %s is not a structure" (get_tast_type_name v_typ)))
+                   (sprintf "type %s is not a structure" (get_tast_type_name v_typ)))
 
-      | TEnil -> error (Some loc) "Use of untyped nil"
-      | _ -> error (Some loc) "Use of dot syntax on a non-identifier" in
+      | TEnil -> error (Some loc) "use of untyped nil"
+      | _ -> error (Some loc) "use of dot syntax on a non-identifier" in
 
     ( match Hashtbl.find_opt structure.s_fields id with
       | Some field -> new_expr (TEdot (tast_expr, field)) typ, rt
       | None -> error (Some loc)
-                  (sprintf "Type %s has no field %s" (get_tast_type_name typ) id))
+                  (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
 
   | PEassign (lvl, el) ->
     let left = List.map (expr_no_return env) lvl in
