@@ -3,4 +3,6 @@ _build/
 *.s
 
 *.dot
+*.png
 *.svg
+*.swp

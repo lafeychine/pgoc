@@ -57,7 +57,7 @@ function compareFiles()
         echo ""
         echo "${DIFF_OUTPUT[0]}"
 
-	    FAILED_TEST=true
+        FAILED_TEST=true
 
     fi
 
@@ -66,10 +66,10 @@ function compareFiles()
 
 
 find "${CALL_PATH}" -name "*.go" -print0 |
-	while IFS= read -r -d '' FILE; do
+    while IFS= read -r -d '' FILE; do
 
-		launchTest "${FILE}"
+        launchTest "${FILE}"
 
-		[[ -n ${FAILED_TEST} ]] && exit 1;
+        [[ -n ${FAILED_TEST} ]] && exit 1;
 
-	done
+    done
