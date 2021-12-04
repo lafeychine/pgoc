@@ -176,13 +176,12 @@ and expr_desc structures functions env loc pexpr_desc =
     let expr_list = List.map (expr_no_return env) el in
 
     (* NOTE Vérification du type entre les paramètres et les arguments *)
-    let check_type var_typ expr_typ =
-      if not (eq_type var_typ expr_typ) then
+    let check_type { v_typ } { expr_typ } =
+      if not (eq_type v_typ expr_typ) then
         error (Some loc)
           (sprintf "cannot use type %s as type %s in argument to %s"
-             (get_tast_type_name expr_typ) (get_tast_type_name var_typ) id) in
-
-    List.iter2 (fun { v_typ } { expr_typ } -> check_type v_typ expr_typ) func.fn_params expr_list;
+             (get_tast_type_name expr_typ) (get_tast_type_name v_typ) id)
+    in List.iter2 check_type func.fn_params expr_list;
 
     (* NOTE Conversion finale en TEcall *)
     new_expr (TEcall (func, expr_list)) func.fn_typ, false
@@ -236,8 +235,22 @@ and expr_desc structures functions env loc pexpr_desc =
                   (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
 
   | PEassign (lvl, el) ->
+    (* NOTE Vérification de la taille des assignements *)
+    if List.length lvl <> List.length el then
+      error (Some loc)
+        (sprintf "assignment mismatch: %d variables but %d values"
+           (List.length lvl) (List.length el));
+
     let left = List.map (expr_no_return env) lvl in
     let right = List.map (expr_no_return env) el in
+
+    (* NOTE Vérification des types lors de l'assignement *)
+    let check_type { expr_typ = id_typ } { expr_typ } =
+      if not (eq_type id_typ expr_typ) then
+        error (Some loc)
+          (sprintf "cannot use type %s as type %s in assignment"
+             (get_tast_type_name expr_typ) (get_tast_type_name id_typ))
+    in List.iter2 check_type left right;
 
     (* NOTE Vérification des l-values *)
     (let check_lvalue { expr_desc } =
@@ -289,11 +302,11 @@ and expr_desc structures functions env loc pexpr_desc =
                   (sprintf "undefined type %s of variable declaration" (get_ast_type_name ptyp)) in
 
     (* NOTE Vérification des types lors de l'assignement *)
-    let check_type var_typ expr_typ =
-      if not (eq_type var_typ expr_typ) then
+    let check_type v_typ { expr_typ } =
+      if not (eq_type v_typ expr_typ) then
         error (Some loc)
           (sprintf "cannot use type %s as type %s in assignment"
-             (get_tast_type_name expr_typ) (get_tast_type_name var_typ)) in
+             (get_tast_type_name expr_typ) (get_tast_type_name v_typ)) in
 
     (* NOTE Transformation en TEvars *)
     let var_expr =
@@ -314,13 +327,11 @@ and expr_desc structures functions env loc pexpr_desc =
                (List.length idents) (List.length pexprs));
 
         let exprs = List.map (expr_no_return env) pexprs in
-        List.iter (fun { expr_typ } -> check_type typ expr_typ) exprs;
+        List.iter (check_type typ) exprs;
 
-        let vars = List.fold_left2 (fun acc { expr_typ } -> create_var expr_typ acc) [] exprs idents in
+        let vars = List.fold_left (create_var typ) [] idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
-
         TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
-
 
       | None, xs ->
         if List.length idents <> List.length pexprs then
@@ -331,7 +342,6 @@ and expr_desc structures functions env loc pexpr_desc =
         let exprs = List.map (expr_no_return env) pexprs in
         let vars = List.fold_left2 (fun acc { expr_typ } -> create_var expr_typ acc) [] exprs idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
-
         TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
 
     in new_stmt var_expr, false
