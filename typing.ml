@@ -394,9 +394,13 @@ let rec sizeof = function
 
 let decl structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
-    let { fn_name; fn_typ } as fn = Context.get id functions in
+    let fn = Context.get id functions in
 
-    let e, rt = expr structures functions Context.create (* TODO *) e in
+    let context =
+      let add_param_to_context context param = Context.add param.v_name param context
+      in List.fold_left add_param_to_context Context.create fn.fn_params in
+
+    let e, rt = expr structures functions context e in
 
     (* NOTE Vérification de chacun des return *)
     ( let rec iter_return_stmt f { expr_desc } =
@@ -406,6 +410,7 @@ let decl structures functions = function
         | TEfor (_, expr) -> iter_return_stmt f expr
         | TEreturn return_values -> f return_values
         | _ -> () in
+
       let check_return_type { fn_name; fn_typ } return_values =
         let return_type = list_type (List.map (fun { expr_typ } -> expr_typ) return_values) in
         if not (eq_type fn_typ return_type) then
@@ -416,9 +421,9 @@ let decl structures functions = function
       in iter_return_stmt (check_return_type fn) e );
 
     (* NOTE Vérification du branche du flot d'exécution *)
-    ( match fn_typ, rt with
+    ( match fn.fn_typ, rt with
       | Tvoid, _ -> ()
-      | _, false -> error (Some loc) (sprintf "missing return at end of function %s" fn_name)
+      | _, false -> error (Some loc) (sprintf "missing return at end of function %s" fn.fn_name)
       | _, _ -> () );
 
     TDfunction (fn, e)
