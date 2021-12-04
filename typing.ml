@@ -84,7 +84,9 @@ let rec type_opt structures = function
 (* NOTE Comparaison de deux types *)
 let rec eq_type ty1 ty2 =
   match ty1, ty2 with
-  | Tvoid, Tvoid | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
+  | Tvoid, Tvoid | Tnil, Tnil | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
+
+  | Tnil, Tptr _ | Tptr _, Tnil -> true
 
   | Tstruct s1, Tstruct s2 -> s1 == s2
 
@@ -186,28 +188,12 @@ and expr_desc structures functions env loc pexpr_desc =
         new_expr (TEbinop (op, expr1, expr2)) Tint, false
 
       | Beq | Bne ->
-        ( match expr1.expr_typ, expr2.expr_typ with
-          | Tnil, Tnil
-          | Tnil, Tptr _
-          | Tptr _, Tnil -> ()
-
-          | _, Tnil ->
-            error (Some pexpr1.pexpr_loc)
-              (sprintf "invalid operation: %s with nil must compare a pointer, have %s"
-                 (get_binop_name op) (get_tast_type_name expr1.expr_typ))
-
-          | Tnil, _ ->
-            error (Some pexpr2.pexpr_loc)
-              (sprintf "invalid operation: %s with nil must compare a pointer, have %s"
-                 (get_binop_name op) (get_tast_type_name expr2.expr_typ))
-
-          | typ1, typ2 ->
-            if not (eq_type typ1 typ2) then
-              error (Some pexpr1.pexpr_loc)
-                (sprintf "invalid operation: %s must compare same type, have %s and %s"
-                   (get_binop_name op)
-                   (get_tast_type_name expr1.expr_typ)
-                   (get_tast_type_name expr2.expr_typ)) );
+        if not (eq_type expr1.expr_typ expr2.expr_typ) then
+          error (Some pexpr1.pexpr_loc)
+            (sprintf "invalid operation: %s must compare same type, have %s and %s"
+               (get_binop_name op)
+               (get_tast_type_name expr1.expr_typ)
+               (get_tast_type_name expr2.expr_typ));
 
         new_expr (TEbinop (op, expr1, expr2)) Tbool, false )
 
