@@ -32,6 +32,21 @@ let fmt_used = ref false
 
 
 (* NOTE Génération du nom d'un type *)
+let get_binop_name = function
+  | Badd -> "+"
+  | Bsub -> "-"
+  | Bmul -> "*"
+  | Bdiv -> "/"
+  | Bmod -> "%"
+  | Beq -> "=="
+  | Bne -> "!="
+  | Blt -> "<"
+  | Ble -> "<="
+  | Bgt -> ">"
+  | Bge -> ">="
+  | Band -> "&&"
+  | Bor -> "||"
+
 let get_incdec_name = function
   | Inc -> "++"
   | Dec -> "--"
@@ -142,8 +157,59 @@ and expr_desc structures functions env loc pexpr_desc =
       | Cstring _ -> Tstring
     in new_expr (TEconstant c) constant, false
 
-  | PEbinop (op, e1, e2) ->
-    (* TODO *) assert false
+  | PEbinop (op, pexpr1, pexpr2) ->
+    let expr1 = expr_no_return env pexpr1 in
+    let expr2 = expr_no_return env pexpr2 in
+
+    let check_type { pexpr_loc } { expr_typ } typ =
+      if not (eq_type expr_typ typ) then
+        error (Some pexpr_loc)
+          (sprintf "invalid operation: %s must be used on %s, not on %s"
+             (get_binop_name op)
+             (get_tast_type_name typ)
+             (get_tast_type_name expr_typ)) in
+
+    ( match op with
+      | Badd | Bsub | Bmul | Bdiv | Bmod ->
+        check_type pexpr1 expr1 Tint;
+        check_type pexpr2 expr2 Tint;
+        new_expr (TEbinop (op, expr1, expr2)) Tint, false
+
+      | Blt | Ble | Bgt | Bge ->
+        check_type pexpr1 expr1 Tint;
+        check_type pexpr2 expr2 Tint;
+        new_expr (TEbinop (op, expr1, expr2)) Tbool, false
+
+      | Band | Bor ->
+        check_type pexpr1 expr1 Tbool;
+        check_type pexpr2 expr2 Tbool;
+        new_expr (TEbinop (op, expr1, expr2)) Tint, false
+
+      | Beq | Bne ->
+        ( match expr1.expr_typ, expr2.expr_typ with
+          | Tnil, Tnil
+          | Tnil, Tptr _
+          | Tptr _, Tnil -> ()
+
+          | _, Tnil ->
+            error (Some pexpr1.pexpr_loc)
+              (sprintf "invalid operation: %s with nil must compare a pointer, have %s"
+                 (get_binop_name op) (get_tast_type_name expr1.expr_typ))
+
+          | Tnil, _ ->
+            error (Some pexpr2.pexpr_loc)
+              (sprintf "invalid operation: %s with nil must compare a pointer, have %s"
+                 (get_binop_name op) (get_tast_type_name expr2.expr_typ))
+
+          | typ1, typ2 ->
+            if not (eq_type typ1 typ2) then
+              error (Some pexpr1.pexpr_loc)
+                (sprintf "invalid operation: %s must compare same type, have %s and %s"
+                   (get_binop_name op)
+                   (get_tast_type_name expr1.expr_typ)
+                   (get_tast_type_name expr2.expr_typ)) );
+
+        new_expr (TEbinop (op, expr1, expr2)) Tbool, false )
 
   | PEunop (op, pexpr) ->
     let expr = expr_no_return env pexpr in
