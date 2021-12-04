@@ -101,6 +101,15 @@ and check_unreachable_expr loc rt (_, expr_rt) =
   | _, true -> error loc "block contains unreachable code"
 
 
+(* NOTE Vérifie si un élément est une l-value *)
+let rec is_lvalue env v =
+  match v with
+  | TEident { v_name } -> Context.elem v_name env
+  | TEunop (Ustar, { expr_desc = TEnil }) -> false
+  | TEunop (Ustar, _) -> true
+  | TEdot ({ expr_desc }, _) -> is_lvalue env expr_desc
+  | _ -> false
+
 
 (* NOTE Création d'un expr à partir d'un expr_desc *)
 let new_expr desc typ = { expr_desc = desc; expr_typ = typ }
@@ -202,6 +211,9 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEnil -> new_stmt TEnil, false (* TODO *)
 
   | PEident { id; loc } ->
+    if id = "_" then
+      error (Some loc) "cannot use _ as value";
+
     ( match Context.search id env with
       | Some v -> ( v.v_used <- true;
                     new_expr (TEident v) v.v_typ, false )
@@ -223,9 +235,16 @@ and expr_desc structures functions env loc pexpr_desc =
       | None -> error (Some loc)
                   (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
 
-  | PEassign (lvl, el) -> (* TODO *)
+  | PEassign (lvl, el) ->
     let left = List.map (expr_no_return env) lvl in
     let right = List.map (expr_no_return env) el in
+
+    (* NOTE Vérification des l-values *)
+    (let check_lvalue { expr_desc } =
+       if not (is_lvalue env expr_desc) then
+         error (Some loc) "cannot assign to a non-left value"
+     in List.iter check_lvalue left);
+
     new_stmt (TEassign (left, right)), false
 
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
@@ -255,29 +274,39 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEincdec (e, op) ->
     (* TODO *) assert false
 
-  | PEvars (idents, ptyp, pexprs) -> (* TODO *)
-    let declare_var ptyp { id; loc } = new_var id loc ptyp false in
+  | PEvars (idents, ptyp, pexprs) ->
+    (* NOTE Création d'une variable, si son nom n'est pas "_" *)
+    let create_var ptyp acc { id; loc } =
+      match id with
+      | "_" -> acc
+      | _   -> acc @ [ new_var id loc ptyp false ] in
 
+    (* NOTE Récupération du type si existant *)
     let get_typ ptyp =
       match type_opt structures ptyp with
       | Some ptyp -> ptyp
       | None -> error (Some loc)
                   (sprintf "undefined type %s of variable declaration" (get_ast_type_name ptyp)) in
 
+    (* NOTE Vérification des types lors de l'assignement *)
+    let check_type var_typ expr_typ =
+      if not (eq_type var_typ expr_typ) then
+        error (Some loc)
+          (sprintf "cannot use type %s as type %s in assignment"
+             (get_tast_type_name expr_typ) (get_tast_type_name var_typ)) in
+
+    (* NOTE Transformation en TEvars *)
     let var_expr =
       match ptyp, pexprs with
       (* | Some ptyp, [ { pexpr_desc = PEcall _ } ] -> () *)
       (* | None, [ { pexpr_desc = PEcall _ } ] -> () *)
 
-      | Some ptyp, [] -> TEvars(List.map (declare_var (get_typ ptyp)) idents)
+      | Some ptyp, [] ->
+        let typ = get_typ ptyp
+        in TEvars(List.fold_left (create_var typ) [] idents)
 
       | Some ptyp, pexprs ->
         let typ = get_typ ptyp in
-        let check_type var_typ expr_typ =
-          if not (eq_type var_typ expr_typ) then
-            error (Some loc)
-              (sprintf "cannot use type %s as type %s in assignment"
-                 (get_tast_type_name expr_typ) (get_tast_type_name var_typ)) in
 
         if List.length idents <> List.length pexprs then
           error (Some loc)
@@ -285,7 +314,9 @@ and expr_desc structures functions env loc pexpr_desc =
                (List.length idents) (List.length pexprs));
 
         let exprs = List.map (expr_no_return env) pexprs in
-        let vars = List.map2 (fun { expr_typ } -> check_type typ expr_typ; declare_var expr_typ) exprs idents in
+        List.iter (fun { expr_typ } -> check_type typ expr_typ) exprs;
+
+        let vars = List.fold_left2 (fun acc { expr_typ } -> create_var expr_typ acc) [] exprs idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
 
         TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
@@ -298,7 +329,7 @@ and expr_desc structures functions env loc pexpr_desc =
                (List.length idents) (List.length pexprs));
 
         let exprs = List.map (expr_no_return env) pexprs in
-        let vars = List.map2 (fun { expr_typ } -> declare_var expr_typ) exprs idents in
+        let vars = List.fold_left2 (fun acc { expr_typ } -> create_var expr_typ acc) [] exprs idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
 
         TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
