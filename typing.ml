@@ -252,22 +252,27 @@ and expr_desc structures functions env loc pexpr_desc =
       | Some func -> func
       | None -> error (Some loc) (sprintf "call to unknown function %s" id) in
 
-    (* NOTE Vérification entre le nombre de paramètres et d'arguments de la fonction *)
-    if List.length el <> List.length func.fn_params then
-      error (Some loc)
-        (sprintf "incorrect number of arguments in call to foo: %d arguments but %d parameters"
-           (List.length el) (List.length func.fn_params));
-
     (* NOTE Construction de chacune des expressions *)
     let expr_list = List.map (expr_no_return env) el in
 
+    (* NOTE Vérification entre le nombre de paramètres et d'arguments de la fonction *)
+    let unfold_expr_typ = List.fold_left (fun acc expr ->
+        match expr.expr_typ with
+        | Tmany typs -> acc @ typs
+        | _ -> acc @ [expr.expr_typ]) [] expr_list in
+
+    if List.length unfold_expr_typ <> List.length func.fn_params then
+      error (Some loc)
+        (sprintf "incorrect number of arguments in call to %s: %d arguments but %d parameters"
+           (func.fn_name) (List.length el) (List.length func.fn_params));
+
     (* NOTE Vérification du type entre les paramètres et les arguments *)
-    let check_type { v_typ } { expr_typ } =
-      if not (eq_type v_typ expr_typ) then
+    let check_type { v_typ } typ =
+      if not (eq_type v_typ typ) then
         error (Some loc)
           (sprintf "cannot use type %s as type %s in argument to %s"
-             (get_tast_type_name expr_typ) (get_tast_type_name v_typ) id)
-    in List.iter2 check_type func.fn_params expr_list;
+             (get_tast_type_name typ) (get_tast_type_name v_typ) id)
+    in List.iter2 check_type func.fn_params unfold_expr_typ;
 
     new_expr (TEcall (func, expr_list)) func.fn_typ, false
 
@@ -297,7 +302,7 @@ and expr_desc structures functions env loc pexpr_desc =
 
     let if_stmt = new_stmt (TEif (expr1, expr2, expr3))
     in ( match expr3.expr_desc with
-        | TEskip -> if_stmt, rt_if
+        | TEskip -> if_stmt, false
         | _      -> if_stmt, rt_if && rt_else )
 
   | PEnil -> new_expr TEnil Tnil, false
@@ -313,22 +318,27 @@ and expr_desc structures functions env loc pexpr_desc =
 
   | PEdot (e, { id; loc }) ->
     let structure_expr, rt = expr env e in
-    let typ, structure =
+    let field =
       match structure_expr.expr_desc with
+      | TEdot (_, field) -> field
+
       | TEident { v_typ } -> (
           match v_typ with
           | Tptr (Tstruct { s_name })
-          | Tstruct { s_name } -> v_typ, Context.get s_name structures
+          | Tstruct { s_name } ->
+            let structure = Context.get s_name structures in
+            ( match Hashtbl.find_opt structure.s_fields id with
+              | Some field -> field
+              | None -> error (Some loc)
+                          (sprintf "type %s has no field %s" (get_tast_type_name v_typ) id))
+
           | _ -> error (Some loc)
                    (sprintf "type %s is not a structure" (get_tast_type_name v_typ)))
 
       | TEnil -> error (Some loc) "use of untyped nil"
       | _ -> error (Some loc) "use of dot syntax on a non-identifier" in
 
-    ( match Hashtbl.find_opt structure.s_fields id with
-      | Some field -> new_expr (TEdot (structure_expr, field)) field.f_typ, rt
-      | None -> error (Some loc)
-                  (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
+    new_expr (TEdot (structure_expr, field)) field.f_typ, rt
 
   | PEassign (lvl, el) ->
     (* NOTE Vérification de la taille des assignements *)
