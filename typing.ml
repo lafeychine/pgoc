@@ -286,8 +286,17 @@ and expr_desc structures functions env loc pexpr_desc =
     new_expr (TEcall (func, expr_list)) func.fn_typ, false
 
 
-  | PEfor (e, b) ->
-    (* TODO *) assert false
+  | PEfor (cond, b) ->
+    let cond_expr = expr_no_return env cond in
+    let block_expr = expr_no_return env b in
+
+    (* NOTE Vérification de la condition *)
+    if not (eq_type cond_expr.expr_typ Tbool) then
+      error (Some cond.pexpr_loc)
+        (sprintf "cannot use non-bool type %s as for condition"
+           (get_tast_type_name cond_expr.expr_typ));
+
+    new_stmt (TEfor (cond_expr, block_expr)), false
 
   | PEif (pexpr1, pexpr2, pexpr3) ->
     let expr1 = expr_no_return env pexpr1 in
