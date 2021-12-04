@@ -23,6 +23,7 @@ and structure = {
 
 and typ =
   | Tvoid
+  | Tnil
   | Tint
   | Tbool
   | Tstring

@@ -38,6 +38,7 @@ let rec get_ast_type_name = function
 
 let rec get_tast_type_name = function
   | Tvoid -> "void"
+  | Tnil -> "nil"
   | Tint -> "int"
   | Tbool -> "bool"
   | Tstring -> "string"
@@ -102,12 +103,12 @@ and check_unreachable_expr loc rt (_, expr_rt) =
 
 
 (* NOTE Vérifie si un élément est une l-value *)
-let rec is_lvalue env v =
-  match v with
+let rec is_lvalue env { expr_desc } =
+  match expr_desc with
   | TEident { v_name } -> Context.elem v_name env
   | TEunop (Ustar, { expr_desc = TEnil }) -> false
   | TEunop (Ustar, _) -> true
-  | TEdot ({ expr_desc }, _) -> is_lvalue env expr_desc
+  | TEdot (expr, _) -> is_lvalue env expr
   | _ -> false
 
 
@@ -140,11 +141,39 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEbinop (op, e1, e2) ->
     (* TODO *) assert false
 
-  | PEunop (Uamp, e1) ->
-    (* TODO *) assert false
+  | PEunop (op, pexpr) ->
+    let expr = expr_no_return env pexpr in
 
-  | PEunop (Uneg | Unot | Ustar as op, e1) ->
-    (* TODO *) assert false
+    ( match op with
+      | Uneg ->
+        if not (eq_type expr.expr_typ Tint) then
+          error (Some pexpr.pexpr_loc)
+            (sprintf "invalid operation: - must be used on int, not on %s"
+               (get_tast_type_name expr.expr_typ));
+        new_expr (TEunop (op, expr)) Tint, false
+
+      | Unot ->
+        if not (eq_type expr.expr_typ Tbool) then
+          error (Some pexpr.pexpr_loc)
+            (sprintf "invalid operation: ! must be used on bool, not on %s"
+               (get_tast_type_name expr.expr_typ));
+        new_expr (TEunop (op, expr)) Tbool, false
+
+      | Uamp ->
+        if not (is_lvalue env expr) then
+          error (Some pexpr.pexpr_loc) "cannot take the address of non-left value";
+        new_expr (TEunop (op, expr)) (Tptr expr.expr_typ), false
+
+      | Ustar ->
+        ( match expr.expr_desc with
+          | TEnil -> error (Some pexpr.pexpr_loc) "cannot dereference explicit nil"
+          | _ -> () );
+
+        ( match expr.expr_typ with
+          | Tptr typ -> new_expr (TEunop (op, expr)) typ, false
+          | _ -> error (Some pexpr.pexpr_loc)
+                   (sprintf "cannot dereference non-pointer %s"
+                      (get_tast_type_name expr.expr_typ))))
 
   | PEcall ({ id = "fmt.Print" }, args) ->
     fmt_used := true;
@@ -157,6 +186,7 @@ and expr_desc structures functions env loc pexpr_desc =
       | None -> error (Some loc) (sprintf "cannot allocate an unknown type %s" id)
     in new_expr (TEnew typ) (Tptr typ), false
 
+  | PEcall ({ id = "new" }, [{ pexpr_desc = PEnil }]) -> error (Some loc) "cannot allocate on nil"
   | PEcall ({ id = "new" }, _) -> error (Some loc) "new expects exactly one type"
 
   | PEcall ({ id; loc }, el) ->
@@ -183,7 +213,6 @@ and expr_desc structures functions env loc pexpr_desc =
              (get_tast_type_name expr_typ) (get_tast_type_name v_typ) id)
     in List.iter2 check_type func.fn_params expr_list;
 
-    (* NOTE Conversion finale en TEcall *)
     new_expr (TEcall (func, expr_list)) func.fn_typ, false
 
 
@@ -201,13 +230,12 @@ and expr_desc structures functions env loc pexpr_desc =
         (sprintf "cannot use non-bool type %s as if condition"
            (get_tast_type_name expr1.expr_typ));
 
-    (* NOTE Conversion finale en TEif *)
     let if_stmt = new_stmt (TEif (expr1, expr2, expr3))
     in ( match expr3.expr_desc with
         | TEskip -> if_stmt, rt_if
         | _      -> if_stmt, rt_if && rt_else )
 
-  | PEnil -> new_stmt TEnil, false (* TODO *)
+  | PEnil -> new_expr TEnil Tnil, false
 
   | PEident { id; loc } ->
     if id = "_" then
@@ -255,8 +283,8 @@ and expr_desc structures functions env loc pexpr_desc =
     in List.iter2 check_type left right;
 
     (* NOTE Vérification des l-values *)
-    (let check_lvalue { expr_desc } =
-       if not (is_lvalue env expr_desc) then
+    (let check_lvalue expr =
+       if not (is_lvalue env expr) then
          error (Some loc) "cannot assign to a non-left value"
      in List.iter check_lvalue left);
 
