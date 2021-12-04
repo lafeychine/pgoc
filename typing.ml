@@ -219,9 +219,11 @@ and expr_desc structures functions env loc pexpr_desc =
       | None -> error (Some loc) ("unbound variable " ^ id) )
 
   | PEdot (e, { id; loc }) ->
-    let tast_expr, rt = expr env e in
-    let typ, structure = match tast_expr.expr_desc with
-      | TEident { v_typ } -> ( match v_typ with
+    let structure_expr, rt = expr env e in
+    let typ, structure = match structure_expr.expr_desc with
+      | TEident { v_typ } -> (
+          match v_typ with
+          | Tptr (Tstruct { s_name })
           | Tstruct { s_name } -> v_typ, Context.get s_name structures
           | _ -> error (Some loc)
                    (sprintf "type %s is not a structure" (get_tast_type_name v_typ)))
@@ -230,7 +232,7 @@ and expr_desc structures functions env loc pexpr_desc =
       | _ -> error (Some loc) "use of dot syntax on a non-identifier" in
 
     ( match Hashtbl.find_opt structure.s_fields id with
-      | Some field -> new_expr (TEdot (tast_expr, field)) typ, rt
+      | Some field -> new_expr (TEdot (structure_expr, field)) field.f_typ, rt
       | None -> error (Some loc)
                   (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
 
@@ -282,7 +284,6 @@ and expr_desc structures functions env loc pexpr_desc =
       | None -> () );
 
     new_stmt (TEblock expr_list), rt
-
 
   | PEincdec (e, op) ->
     (* TODO *) assert false
@@ -356,7 +357,6 @@ let phase1 structures = function
 
     (* NOTE Ajout des structures dans le contexte de typage sans les champs *)
     Context.add id { s_name = id; s_fields = Hashtbl.create 5 } structures
-
 
   | _ -> structures
 
