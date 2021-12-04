@@ -43,7 +43,7 @@ let rec get_tast_type_name = function
   | Tstring -> "string"
   | Tstruct { s_name } -> s_name
   | Tptr typ -> "*" ^ get_tast_type_name typ
-  | Tmany (x :: xs) -> List.fold_left (fun acc typ -> acc ^ ", " ^ get_tast_type_name typ) (get_tast_type_name x) xs
+  | Tmany typ -> String.concat ", " (List.map get_tast_type_name typ)
 
 
 (* NOTE Récupération, si existant, du type correspondant à la chaîne de caractère *)
@@ -175,22 +175,31 @@ and expr_desc structures functions env loc pexpr_desc =
 
     List.iter2 (fun { v_typ } { expr_typ } -> check_type v_typ expr_typ) func.fn_params expr_list;
 
-    (* NOTE Convertion finale en TEcall *)
+    (* NOTE Conversion finale en TEcall *)
     new_expr (TEcall (func, expr_list)) func.fn_typ, false
 
 
   | PEfor (e, b) ->
     (* TODO *) assert false
 
-  | PEif (e1, e2, e3) ->
-    let e1 = expr_no_return env e1 in
-    let e2, rt_if = expr env e2 in
-    let e3, rt_else = expr env e3 in
-    ( match e3 with
-      | { expr_desc = TEskip } -> new_stmt (TEif (e1, e2, e3)), rt_if
-      | _ -> new_stmt (TEif (e1, e2, e3)), rt_if && rt_else )
+  | PEif (pexpr1, pexpr2, pexpr3) ->
+    let expr1 = expr_no_return env pexpr1 in
+    let expr2, rt_if = expr env pexpr2 in
+    let expr3, rt_else = expr env pexpr3 in
 
-  | PEnil -> new_stmt TEnil, false
+    (* NOTE Vérification de la condition *)
+    if not (eq_type expr1.expr_typ Tbool) then
+      error (Some pexpr1.pexpr_loc)
+        (sprintf "cannot use non-bool type %s as if condition"
+           (get_tast_type_name expr1.expr_typ));
+
+    (* NOTE Conversion finale en TEif *)
+    let if_stmt = new_stmt (TEif (expr1, expr2, expr3))
+    in ( match expr3.expr_desc with
+        | TEskip -> if_stmt, rt_if
+        | _      -> if_stmt, rt_if && rt_else )
+
+  | PEnil -> new_stmt TEnil, false (* TODO *)
 
   | PEident { id; loc } ->
     ( match Context.search id env with
@@ -214,7 +223,7 @@ and expr_desc structures functions env loc pexpr_desc =
       | None -> error (Some loc)
                   (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
 
-  | PEassign (lvl, el) ->
+  | PEassign (lvl, el) -> (* TODO *)
     let left = List.map (expr_no_return env) lvl in
     let right = List.map (expr_no_return env) el in
     new_stmt (TEassign (left, right)), false
@@ -222,7 +231,7 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
   | PEblock el ->
-    let expr_propagate_env env el =
+    let expr_propagate_env env el = (* TODO *)
       let add_var_to_env env v = Context.add v.v_name v env in
       let tast_expr, rt = expr env el in
       let env = match el.pexpr_desc, tast_expr.expr_desc with
@@ -246,7 +255,7 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEincdec (e, op) ->
     (* TODO *) assert false
 
-  | PEvars (idents, ptyp, pexprs) ->
+  | PEvars (idents, ptyp, pexprs) -> (* TODO *)
     let declare_var ptyp { id; loc } = new_var id loc ptyp false in
 
     let get_typ ptyp =
@@ -387,7 +396,7 @@ let decl structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
     let { fn_name; fn_typ } as fn = Context.get id functions in
 
-    let e, rt = expr structures functions Context.create e in
+    let e, rt = expr structures functions Context.create (* TODO *) e in
 
     (* NOTE Vérification de chacun des return *)
     ( let rec iter_return_stmt f { expr_desc } =
