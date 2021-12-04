@@ -32,6 +32,10 @@ let fmt_used = ref false
 
 
 (* NOTE Génération du nom d'un type *)
+let get_incdec_name = function
+  | Inc -> "++"
+  | Dec -> "--"
+
 let rec get_ast_type_name = function
   | PTident { id } -> id
   | PTptr ptyp -> "*" ^ get_ast_type_name ptyp
@@ -248,7 +252,8 @@ and expr_desc structures functions env loc pexpr_desc =
 
   | PEdot (e, { id; loc }) ->
     let structure_expr, rt = expr env e in
-    let typ, structure = match structure_expr.expr_desc with
+    let typ, structure =
+      match structure_expr.expr_desc with
       | TEident { v_typ } -> (
           match v_typ with
           | Tptr (Tstruct { s_name })
@@ -313,8 +318,19 @@ and expr_desc structures functions env loc pexpr_desc =
 
     new_stmt (TEblock expr_list), rt
 
-  | PEincdec (e, op) ->
-    (* TODO *) assert false
+  | PEincdec (pexpr, op) ->
+    let expr = expr_no_return env pexpr in
+
+    if not (eq_type expr.expr_typ Tint) then
+      error (Some pexpr.pexpr_loc)
+        (sprintf "invalid operation: %s must be used on int, not on %s"
+           (get_incdec_name op) (get_tast_type_name expr.expr_typ));
+
+    if not (is_lvalue env expr) then
+      error (Some pexpr.pexpr_loc)
+        (sprintf "cannot assign to a non-left value");
+
+    new_expr (TEincdec (expr, op)) Tint, false
 
   | PEvars (idents, ptyp, pexprs) ->
     (* NOTE Création d'une variable, si son nom n'est pas "_" *)
