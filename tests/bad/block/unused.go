@@ -6,6 +6,6 @@ func main() {
 
 /*
 == Expected compiler output ==
-File "./tests/bad/vars/unused.go", line 4, characters 5-6:
+File "./tests/bad/block/unused.go", line 4, characters 5-6:
 error: a declared but not used
 */
