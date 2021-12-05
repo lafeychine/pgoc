@@ -106,10 +106,14 @@ let list_type = function
 
 (* NOTE Création d'une nouvelle variable *)
 let new_var =
-  let id = ref 0 in
+  let id = ref (-1) in
   fun name loc typ used ->
     incr id;
     { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used; v_addr = false }
+
+let underscore_var =
+  let dummy_pos = (Lexing.dummy_pos, Lexing.dummy_pos)
+  in { expr_desc = TEident (new_var "_" dummy_pos Tvoid true); expr_typ = Tvoid }
 
 
 (* NOTE Vérifie si un bloc contient un return, et plus rien après *)
@@ -123,14 +127,25 @@ and check_unreachable_expr loc rt (_, expr_rt) =
   | _, true -> error loc "block contains unreachable code"
 
 
+(* NOTE Dépliage du type Tmany *)
+let unfold_expr_typ expr_list =
+  let unfold acc { expr_typ } =
+    match expr_typ with
+    | Tmany typs -> acc @ typs
+    | _ -> acc @ [expr_typ]
+  in List.fold_left unfold [] expr_list
+
+
 (* NOTE Vérifie si un élément est une l-value *)
-let rec is_lvalue env { expr_desc } =
-  match expr_desc with
-  | TEident { v_name } -> Context.elem v_name env
-  | TEunop (Ustar, { expr_desc = TEnil }) -> false
-  | TEunop (Ustar, _) -> true
-  | TEdot (expr, _) -> is_lvalue env expr
-  | _ -> false
+let rec is_lvalue env expr =
+  if expr = underscore_var then true
+  else
+    match expr.expr_desc with
+    | TEident { v_name } -> Context.elem v_name env
+    | TEunop (Ustar, { expr_desc = TEnil }) -> false
+    | TEunop (Ustar, _) -> true
+    | TEdot (expr, _) -> is_lvalue env expr
+    | _ -> false
 
 
 (* NOTE Création d'un expr à partir d'un expr_desc *)
@@ -256,12 +271,7 @@ and expr_desc structures functions env loc pexpr_desc =
     let expr_list = List.map (expr_no_return env) el in
 
     (* NOTE Vérification entre le nombre de paramètres et d'arguments de la fonction *)
-    let unfold_expr_typ = List.fold_left (fun acc expr ->
-        match expr.expr_typ with
-        | Tmany typs -> acc @ typs
-        | _ -> acc @ [expr.expr_typ]) [] expr_list in
-
-    if List.length unfold_expr_typ <> List.length func.fn_params then
+    if List.length (unfold_expr_typ expr_list) <> List.length func.fn_params then
       error (Some loc)
         (sprintf "incorrect number of arguments in call to %s: %d arguments but %d parameters"
            (func.fn_name) (List.length el) (List.length func.fn_params));
@@ -272,7 +282,7 @@ and expr_desc structures functions env loc pexpr_desc =
         error (Some loc)
           (sprintf "cannot use type %s as type %s in argument to %s"
              (get_tast_type_name typ) (get_tast_type_name v_typ) id)
-    in List.iter2 check_type func.fn_params unfold_expr_typ;
+    in List.iter2 check_type func.fn_params (unfold_expr_typ expr_list);
 
     new_expr (TEcall (func, expr_list)) func.fn_typ, false
 
@@ -341,28 +351,34 @@ and expr_desc structures functions env loc pexpr_desc =
     new_expr (TEdot (structure_expr, field)) field.f_typ, rt
 
   | PEassign (lvl, el) ->
+    (* NOTE Récupération de l'expression, si son nom n'est pas "_" *)
+    let maybe_expr pexpr_left =
+      match pexpr_left.pexpr_desc with
+      | PEident { id = "_" } -> underscore_var
+      | _ -> expr_no_return env pexpr_left in
+
+    let left = List.map maybe_expr lvl  in
+    let right = List.map (expr_no_return env) el in
+
     (* NOTE Vérification de la taille des assignements *)
-    if List.length lvl <> List.length el then
+    if List.length lvl <> List.length (unfold_expr_typ right) then
       error (Some loc)
         (sprintf "assignment mismatch: %d variables but %d values"
            (List.length lvl) (List.length el));
 
-    let left = List.map (expr_no_return env) lvl in
-    let right = List.map (expr_no_return env) el in
-
     (* NOTE Vérification des types lors de l'assignement *)
-    let check_type { expr_typ = id_typ } { expr_typ } =
-      if not (eq_type id_typ expr_typ) then
+    let check_type expr typ =
+      if expr <> underscore_var && not (eq_type expr.expr_typ typ) then
         error (Some loc)
           (sprintf "cannot use type %s as type %s in assignment"
-             (get_tast_type_name expr_typ) (get_tast_type_name id_typ))
-    in List.iter2 check_type left right;
+             (get_tast_type_name typ) (get_tast_type_name expr.expr_typ))
+    in List.iter2 check_type left (unfold_expr_typ right);
 
     (* NOTE Vérification des l-values *)
-    (let check_lvalue expr =
-       if not (is_lvalue env expr) then
-         error (Some loc) "cannot assign to a non-left value"
-     in List.iter check_lvalue left);
+    ( let check_lvalue expr =
+        if not (is_lvalue env expr) then
+          error (Some loc) "cannot assign to a non-left value"
+      in List.iter check_lvalue left);
 
     new_stmt (TEassign (left, right)), false
 
@@ -427,9 +443,6 @@ and expr_desc structures functions env loc pexpr_desc =
     (* NOTE Transformation en TEvars *)
     let var_expr =
       match ptyp, pexprs with
-      (* | Some ptyp, [ { pexpr_desc = PEcall _ } ] -> () *)
-      (* | None, [ { pexpr_desc = PEcall _ } ] -> () *)
-
       | Some ptyp, [] ->
         let typ = get_typ ptyp
         in TEvars(List.fold_left (create_var typ) [] idents)
