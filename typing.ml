@@ -274,7 +274,7 @@ and expr_desc structures functions env loc pexpr_desc =
     if List.length (unfold_expr_typ expr_list) <> List.length func.fn_params then
       error (Some loc)
         (sprintf "incorrect number of arguments in call to %s: %d arguments but %d parameters"
-           (func.fn_name) (List.length el) (List.length func.fn_params));
+           (func.fn_name) (List.length (unfold_expr_typ expr_list)) (List.length func.fn_params));
 
     (* NOTE Vérification du type entre les paramètres et les arguments *)
     let check_type { v_typ } typ =
@@ -364,7 +364,7 @@ and expr_desc structures functions env loc pexpr_desc =
     if List.length lvl <> List.length (unfold_expr_typ right) then
       error (Some loc)
         (sprintf "assignment mismatch: %d variables but %d values"
-           (List.length lvl) (List.length el));
+           (List.length lvl) (List.length (unfold_expr_typ right)));
 
     (* NOTE Vérification des types lors de l'assignement *)
     let check_type expr typ =
