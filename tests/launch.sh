@@ -20,9 +20,7 @@ function launchTest()
                      <(${PGOC} --type-only "$1" 2>&1) \
                      <(awk "/${MSG_EXPECTED_COMPILER}/,0" "$1" | awk "1;/*\//{exit}" | sed -e '1d;$d')
 
-    fi
-
-    if grep -q "${MSG_EXPECTED_TAST}" "$1"; then
+    elif grep -q "${MSG_EXPECTED_TAST}" "$1"; then
 
         compareFiles "No error" \
                      <(${PGOC} --debug --type-only "$1" 2>&1) \
@@ -34,6 +32,12 @@ function launchTest()
 
         rm -f "${FILEPATH}_ast.dot"
         rm -f "${FILEPATH}_tast.dot"
+
+    else
+
+        compareFiles "No error" \
+                     <(${PGOC} --type-only "$1" 2>&1) \
+                     <(echo -ne "")
 
     fi
 
