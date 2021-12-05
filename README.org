@@ -1,0 +1,13 @@
+* Petit Go Compiler
+
+The goal of the project is to build a compiler of Petit Go language.
+
+
+** How to build the project?
+
+You must have ~ocaml~ toolset ready, then you can build with ~make~
+
+
+** How to launch tests?
+
+From the root of the project, you can launch test with ~./tests/launch.sh~.
