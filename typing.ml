@@ -111,9 +111,8 @@ let new_var =
     incr id;
     { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used; v_addr = false }
 
-let underscore_var =
-  let dummy_pos = (Lexing.dummy_pos, Lexing.dummy_pos)
-  in { expr_desc = TEident (new_var "_" dummy_pos Tvoid true); expr_typ = Tvoid }
+let underscore_var = new_var "_" (Lexing.dummy_pos, Lexing.dummy_pos) Tvoid true
+let underscore_ident = { expr_desc = TEident (underscore_var); expr_typ = Tvoid }
 
 
 (* NOTE Vérifie si un bloc contient un return, et plus rien après *)
@@ -138,7 +137,7 @@ let unfold_expr_typ expr_list =
 
 (* NOTE Vérifie si un élément est une l-value *)
 let rec is_lvalue env expr =
-  if expr = underscore_var then true
+  if expr = underscore_ident then true
   else
     match expr.expr_desc with
     | TEident { v_name } -> Context.elem v_name env
@@ -352,12 +351,12 @@ and expr_desc structures functions env loc pexpr_desc =
 
   | PEassign (lvl, el) ->
     (* NOTE Récupération de l'expression, si son nom n'est pas "_" *)
-    let maybe_expr pexpr_left =
+    let lvalue_expr pexpr_left =
       match pexpr_left.pexpr_desc with
-      | PEident { id = "_" } -> underscore_var
+      | PEident { id = "_" } -> underscore_ident
       | _ -> expr_no_return env pexpr_left in
 
-    let left = List.map maybe_expr lvl  in
+    let left = List.map lvalue_expr lvl in
     let right = List.map (expr_no_return env) el in
 
     (* NOTE Vérification de la taille des assignements *)
@@ -368,7 +367,7 @@ and expr_desc structures functions env loc pexpr_desc =
 
     (* NOTE Vérification des types lors de l'assignement *)
     let check_type expr typ =
-      if expr <> underscore_var && not (eq_type expr.expr_typ typ) then
+      if expr <> underscore_ident && not (eq_type expr.expr_typ typ) then
         error (Some loc)
           (sprintf "cannot use type %s as type %s in assignment"
              (get_tast_type_name typ) (get_tast_type_name expr.expr_typ))
@@ -385,7 +384,7 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
   | PEblock el ->
-    let expr_propagate_env env el = (* TODO *)
+    let expr_propagate_env env el =
       let add_var_to_env env v = Context.add v.v_name v env in
       let tast_expr, rt = expr env el in
       let env = match el.pexpr_desc, tast_expr.expr_desc with
@@ -421,56 +420,59 @@ and expr_desc structures functions env loc pexpr_desc =
 
   | PEvars (idents, ptyp, pexprs) ->
     (* NOTE Création d'une variable, si son nom n'est pas "_" *)
-    let create_var ptyp acc { id; loc } =
+    let create_var ptyp { id; loc } =
       match id with
-      | "_" -> acc
-      | _   -> acc @ [ new_var id loc ptyp false ] in
+      | "_" -> underscore_var
+      | _   -> new_var id loc ptyp false in
 
     (* NOTE Récupération du type si existant *)
     let get_typ ptyp =
       match type_opt structures ptyp with
       | Some ptyp -> ptyp
       | None -> error (Some loc)
-                  (sprintf "undefined type %s of variable declaration" (get_ast_type_name ptyp)) in
+                  (sprintf "undefined type %s of variable declaration"
+                     (get_ast_type_name ptyp)) in
+
+    (* NOTE Vérification de la taille des assignements *)
+    let check_assign_length idents expr =
+      let expr_typ = unfold_expr_typ expr in
+      if List.length idents <> List.length expr_typ then
+        error (Some loc)
+          (sprintf "assignment mismatch: %d variables but %d values"
+             (List.length idents) (List.length expr_typ)) in
 
     (* NOTE Vérification des types lors de l'assignement *)
-    let check_type v_typ { expr_typ } =
-      if not (eq_type v_typ expr_typ) then
+    let check_type typ expr_typ =
+      if not (eq_type expr_typ typ) then
         error (Some loc)
           (sprintf "cannot use type %s as type %s in assignment"
-             (get_tast_type_name expr_typ) (get_tast_type_name v_typ)) in
+             (get_tast_type_name expr_typ) (get_tast_type_name typ)) in
 
     (* NOTE Transformation en TEvars *)
     let var_expr =
       match ptyp, pexprs with
-      | Some ptyp, [] ->
-        let typ = get_typ ptyp
-        in TEvars(List.fold_left (create_var typ) [] idents)
+      | Some ptyp, [] -> TEvars(List.map (create_var (get_typ ptyp)) idents)
 
       | Some ptyp, pexprs ->
         let typ = get_typ ptyp in
-
-        if List.length idents <> List.length pexprs then
-          error (Some loc)
-            (sprintf "assignment mismatch: %d variables but %d values"
-               (List.length idents) (List.length pexprs));
-
         let exprs = List.map (expr_no_return env) pexprs in
-        List.iter (check_type typ) exprs;
 
-        let vars = List.fold_left (create_var typ) [] idents in
+        check_assign_length idents exprs;
+        List.iter (check_type typ) (unfold_expr_typ exprs);
+
+        let vars = List.map (create_var typ) idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
+
         TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
 
       | None, xs ->
-        if List.length idents <> List.length pexprs then
-          error (Some loc)
-            (sprintf "assignment mismatch: %d variables but %d values"
-               (List.length idents) (List.length pexprs));
-
         let exprs = List.map (expr_no_return env) pexprs in
-        let vars = List.fold_left2 (fun acc { expr_typ } -> create_var expr_typ acc) [] exprs idents in
+
+        check_assign_length idents exprs;
+
+        let vars = List.map2 create_var (unfold_expr_typ exprs) idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
+
         TEblock([new_stmt (TEvars(vars)); new_stmt (TEassign(idents, exprs))])
 
     in new_stmt var_expr, false
