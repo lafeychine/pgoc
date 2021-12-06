@@ -139,6 +139,14 @@ let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
   | TDstruct _ -> code
 
+let print_int =
+  label "print_int" ++
+  movq !%rdi !%rsi ++
+  movq (ilab "S_int") !%rdi ++
+  xorq !%rax !%rax ++
+  call "printf" ++
+  ret
+
 let file ?debug:(b=false) dl =
   debug := b;
   (* TODO calcul offset champs *)
@@ -149,14 +157,8 @@ let file ?debug:(b=false) dl =
       xorq (reg rax) (reg rax) ++
       ret ++
       funs ++
-      inline "
-print_int:
-        movq    %rdi, %rsi
-        movq    $S_int, %rdi
-        xorq    %rax, %rax
-        call    printf
-        ret
-"; (* TODO print pour d'autres valeurs *)
+      print_int;
+    (* TODO print pour d'autres valeurs *)
     (* TODO appel malloc de stdlib *)
     data =
       label "S_int" ++ string "%ld" ++
