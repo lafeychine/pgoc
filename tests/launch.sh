@@ -3,41 +3,47 @@
 CALL_PATH="$(dirname "$0")"
 
 MSG_EXPECTED_COMPILER="== Expected compiler output =="
-MSG_EXPECTED_TAST="== Expected TAST =="
+MSG_EXPECTED_PROGRAM="== Expected program output =="
 PGOC="./pgoc --no-pretty"
+ASSEMBLY="gcc -no-pie"
 
 
 # void launchTest(String filePath)
 function launchTest()
 {
-    FILEPATH="${1%".go"}"
+    FILEPATH="$1"
+    FILEPATH_NOEXT="${FILEPATH%.go}"
 
-    echo "Launch ${FILEPATH#"${CALL_PATH}/"}:"
+    echo "Launch ${FILEPATH_NOEXT#"${CALL_PATH}/"}:"
 
-    if grep -q "${MSG_EXPECTED_COMPILER}" "$1"; then
+    if grep -q "${MSG_EXPECTED_COMPILER}" "${FILEPATH}"; then
 
         compareFiles "Compiler output" \
-                     <(${PGOC} --type-only "$1" 2>&1) \
-                     <(awk "/${MSG_EXPECTED_COMPILER}/,0" "$1" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+                     <(${PGOC} --type-only "${FILEPATH}" 2>&1) \
+                     <(awk "/${MSG_EXPECTED_COMPILER}/,0" "${FILEPATH}" | awk "1;/*\//{exit}" | sed -e '1d;$d')
 
-    elif grep -q "${MSG_EXPECTED_TAST}" "$1"; then
+    elif grep -q "${MSG_EXPECTED_PROGRAM}" "${FILEPATH}"; then
 
-        compareFiles "No error" \
-                     <(${PGOC} --debug --type-only "$1" 2>&1) \
+        compareFiles "No compilation error" \
+                     <(${PGOC} "${FILEPATH}" 2>&1) \
                      <(echo -ne "")
 
-        compareFiles "TAST output" \
-                     "${FILEPATH}_tast.dot" \
-                     <(awk "/${MSG_EXPECTED_TAST}/,0" "${FILEPATH}.go" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+        compareFiles "No assembly error" \
+                     <(${ASSEMBLY} "${FILEPATH_NOEXT}.s" -o "${FILEPATH_NOEXT}" 2>&1) \
+                     <(echo -ne "")
 
-        rm -f "${FILEPATH}_ast.dot"
-        rm -f "${FILEPATH}_tast.dot"
+        compareFiles "Program output" \
+                     <(${FILEPATH_NOEXT}) \
+                     <(awk "/${MSG_EXPECTED_PROGRAM}/,0" "${FILEPATH}" | awk "1;/*\//{exit}" | sed -e '1d;$d')
+
+        rm -rf "${FILEPATH_NOEXT}.s"
+        rm -rf "${FILEPATH_NOEXT}"
 
     else
 
-        compareFiles "No error" \
-                     <(${PGOC} --type-only "$1" 2>&1) \
-                     <(echo -ne "")
+        echo -ne " - "
+        tput setaf 3; echo -n "WARNING"; tput setaf 7
+        echo ": No test was run on this file"
 
     fi
 
@@ -50,7 +56,7 @@ function compareFiles()
 {
     echo -ne " - $1: "
 
-    if DIFF_OUTPUT=$(diff -Bw "$2" "$3"); then
+    if DIFF_OUTPUT=$(diff -aBw "$2" "$3"); then
 
         tput setaf 2; echo -n "OK"; tput setaf 7
 
