@@ -470,6 +470,13 @@ and expr_desc structures functions env loc pexpr_desc =
 
         check_assign_length idents exprs;
 
+        (* NOTE Check nil assignment *)
+        ( let check_nil expr =
+            if expr.expr_desc = TEnil then
+              error (Some loc)
+                (sprintf "cannot infer type of variable assignation from nil pointer")
+          in List.iter check_nil exprs );
+
         let vars = List.map2 create_var (unfold_expr_typ exprs) idents in
         let idents = List.map (fun x -> new_stmt (TEident x)) vars in
 
