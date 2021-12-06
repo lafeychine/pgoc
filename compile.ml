@@ -29,6 +29,9 @@ open Ast
 open Tast
 open X86_64
 
+(* NOTE Redéfinition de label: Gain de lisibilité *)
+let label s = nop ++ label s
+
 let debug = ref false
 
 let strings = Hashtbl.create 32

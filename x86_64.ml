@@ -301,14 +301,14 @@ type program = {
 }
 
 let rec pr_asm fmt = function
-  | Nop          -> ()
+  | Nop          -> fprintf fmt "\n"
   | S s          -> fprintf fmt "%s" s
   | Cat (a1, a2) -> pr_asm fmt a1; pr_asm fmt a2
 
 let print_program fmt p =
   fprintf fmt "\t.text\n";
   pr_asm fmt p.text;
-  fprintf fmt "\t.data\n";
+  fprintf fmt "\n\n\t.data\n";
   pr_asm fmt p.data;
   pp_print_flush fmt ()
 
