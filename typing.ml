@@ -385,9 +385,14 @@ and expr_desc structures functions env loc pexpr_desc =
 
   | PEblock el ->
     let expr_propagate_env env el =
-      let add_var_to_env env v = Context.add v.v_name v env in
       let tast_expr, rt = expr env el in
-      let env = match el.pexpr_desc, tast_expr.expr_desc with
+      let env =
+        let add_var_to_env env v =
+          if Context.elem v.v_name env then
+            error (Some v.v_loc)
+              (sprintf "multiple declaration of %s" v.v_name);
+          Context.add v.v_name v env in
+        match el.pexpr_desc, tast_expr.expr_desc with
         | PEvars _, TEblock ({ expr_desc = TEvars var_list} :: _)
         | PEvars _, TEvars var_list -> List.fold_left add_var_to_env env var_list
         | _ -> env
