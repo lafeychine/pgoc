@@ -54,6 +54,8 @@ function launchTest()
 # void compareFiles(String msg, String file, String expectedFile)
 function compareFiles()
 {
+    [[ -n ${FAILED_TEST} ]] && return
+
     echo -ne " - $1: "
 
     if DIFF_OUTPUT=$(diff -aBw "$2" "$3"); then
