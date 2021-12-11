@@ -140,7 +140,7 @@ let rec is_lvalue env expr =
   if expr = underscore_ident then true
   else
     match expr.expr_desc with
-    | TEident { v_name } -> Context.elem v_name env
+    | TEident { v_name } -> List.exists (Context.elem v_name) env
     | TEunop (Ustar, { expr_desc = TEnil }) -> false
     | TEunop (Ustar, _) -> true
     | TEdot (expr, _) -> is_lvalue env expr
@@ -320,7 +320,7 @@ and expr_desc structures functions env loc pexpr_desc =
     if id = "_" then
       error (Some loc) "cannot use _ as value";
 
-    ( match Context.search id env with
+    ( match List.find_map (Context.search id) env with
       | Some v -> ( v.v_used <- true;
                     new_expr (TEident v) v.v_typ, false )
       | None -> error (Some loc) ("unbound variable " ^ id) )
@@ -384,25 +384,25 @@ and expr_desc structures functions env loc pexpr_desc =
   | PEreturn el -> new_stmt (TEreturn (List.map (expr_no_return env) el)), true
 
   | PEblock el ->
-    let expr_propagate_env env el =
-      let tast_expr, rt = expr env el in
-      let env =
-        let add_var_to_env env v =
-          if Context.elem v.v_name env then
+    let expr_propagate_env current_env el =
+      let tast_expr, rt = expr (current_env :: env) el in
+      let current_env =
+        let add_var_to_env current_env v =
+          if Context.elem v.v_name current_env then
             error (Some v.v_loc)
               (sprintf "multiple declaration of %s" v.v_name);
-          Context.add v.v_name v env in
+          Context.add v.v_name v current_env in
         match el.pexpr_desc, tast_expr.expr_desc with
         | PEvars _, TEblock ({ expr_desc = TEvars var_list} :: _)
-        | PEvars _, TEvars var_list -> List.fold_left add_var_to_env env var_list
-        | _ -> env
-      in env, (tast_expr, rt) in
+        | PEvars _, TEvars var_list -> List.fold_left add_var_to_env current_env var_list
+        | _ -> current_env
+      in current_env, (tast_expr, rt) in
 
-    let env, expr_list = List.fold_left_map expr_propagate_env env el in
+    let current_env, expr_list = List.fold_left_map expr_propagate_env Context.create el in
     let expr_list, rt = check_unreachable_expr_list (Some loc) expr_list in
 
     (* NOTE Vérification des variables non utilisées *)
-    ( match Context.find (fun _ { v_used } -> not v_used) env with
+    ( match Context.find (fun _ { v_used } -> not v_used) current_env with
       | Some (_, { v_name; v_loc }) ->
         error (Some v_loc) (sprintf "%s declared but not used" v_name)
       | None -> () );
@@ -583,7 +583,7 @@ let decl structures functions = function
       let add_param_to_context context param = Context.add param.v_name param context
       in List.fold_left add_param_to_context Context.create fn.fn_params in
 
-    let e, rt = expr structures functions context e in
+    let e, rt = expr structures functions [ context ] e in
 
     (* NOTE Vérification de chacun des return *)
     ( let rec iter_return_stmt f { expr_desc } =
