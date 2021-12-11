@@ -58,6 +58,7 @@ let () =
     if !parse_only then exit 0;
 
     let f = Typing.file f in
+    let f = Rewrite.file ~debug f in
 
     if debug then begin
       let ast_dot_file = open_out (Filename.chop_suffix file ".go" ^ "_tast.dot") in
@@ -66,9 +67,9 @@ let () =
     end;
 
     if type_only then exit 0;
-    let f = Rewrite.file ~debug f in
 
-    let code = Compile.file ~debug f in
+    let code = Compile.file f in
+
     let c = open_out (Filename.chop_suffix file ".go" ^ ".s") in
     let fmt = formatter_of_out_channel c in
     X86_64.print_program fmt code;

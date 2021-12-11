@@ -29,6 +29,12 @@ open Ast
 open Tast
 open X86_64
 
+
+(* NOTE Quelques constantes *)
+let reg_bytes = 8
+let reg_max_args = 6  (* RDI, RSI, RDX, RCX, R8, R9 *)
+
+
 (* NOTE Redéfinition de label: Gain de lisibilité *)
 let label s = nop ++ label s
 
@@ -70,19 +76,20 @@ let compile_bool f =
   movq (imm 0) (reg rdi) ++ jmp l_end ++
   label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
 
-let rec expr env e = match e.expr_desc with
-  | TEskip ->
-    nop
-  | TEconstant (Cbool true) ->
-    movq (imm 1) (reg rdi)
-  | TEconstant (Cbool false) ->
-    movq (imm 0) (reg rdi)
-  | TEconstant (Cint x) ->
-    movq (imm64 x) (reg rdi)
-  | TEnil ->
-    xorq (reg rdi) (reg rdi)
-  | TEconstant (Cstring s) ->
-    (* TODO code pour constante string *) assert false 
+let rec expr env e =
+  match e.expr_desc with
+  | TEskip -> nop
+
+  | TEconstant (Cbool true) -> movq (imm 1) !%rdi
+
+  | TEconstant (Cbool false) -> movq (imm 0) !%rdi
+
+  | TEconstant (Cint x) -> movq (imm64 x) !%rdi
+
+  | TEconstant (Cstring s) -> movq (ilab (alloc_string s)) !%rdi
+
+  | TEnil -> xorq (reg rdi) (reg rdi)
+
   | TEbinop (Band, e1, e2) ->
     (* TODO code pour ET logique lazy *) assert false 
   | TEbinop (Bor, e1, e2) ->
@@ -101,18 +108,44 @@ let rec expr env e = match e.expr_desc with
     (* TODO code pour & *) assert false 
   | TEunop (Ustar, e1) ->
     (* TODO code pour * *) assert false 
+
   | TEprint el ->
-    (* TODO code pour Print *) assert false 
+    (* NOTE Génération du format pour printf *)
+    let fmt_label =
+      let create_fmt (acc, prefix) expr =
+        ( match expr.expr_typ with
+          | Tint -> (acc ^ prefix ^ "%ld", " ")
+          | Tstring -> (acc ^ prefix ^ "%s", "")
+          | _ -> (* TODO *) assert false ) in
+
+      let fmt, _ = List.fold_left create_fmt ("", "") el
+      in alloc_string fmt in
+
+    (* NOTE Génération du code *)
+    let eval_and_push acc expr = expr ++ acc ++ pushq !%rdi in
+    let nb_args = (List.length el + 1) in
+
+    nop ++ nop ++ nop ++
+    subq (imm (reg_bytes * (max 0 (reg_max_args - nb_args)))) !%rsp ++
+    List.fold_right eval_and_push (List.map (expr env) el) nop ++
+    pushq (ilab fmt_label) ++
+    call "print" ++
+    addq (imm (reg_bytes * (max nb_args reg_max_args))) !%rsp
+
+
   | TEident x ->
-    (* TODO code pour x *) assert false 
+    (* TODO code pour x *) assert false
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
-    (* TODO code pour x := e *) assert false 
+    (* TODO code pour x := e *) assert false
   | TEassign ([lv], [e1]) ->
-    (* TODO code pour x1,... := e1,... *) assert false 
+    (* TODO code pour x1,... := e1,... *) assert false
   | TEassign (_, _) ->
     assert false
+
   | TEblock el ->
-    (* TODO code pour block *) assert false
+    (* TODO *)
+    List.fold_left (++) nop (List.map (expr env) el)
+
   | TEif (e1, e2, e3) ->
     (* TODO code pour if *) assert false
   | TEfor (e1, e2) ->
@@ -134,37 +167,49 @@ let rec expr env e = match e.expr_desc with
   | TEincdec (e1, op) ->
     (* TODO code pour return e++, e-- *) assert false
 
-let function_ f e =
-  if !debug then eprintf "function %s:@." f.fn_name;
-  (* TODO code pour fonction *) let s = f.fn_name in label ("F_" ^ s) 
 
-let decl code = function
-  | TDfunction (f, e) -> code ++ function_ f e
-  | TDstruct _ -> code
-
-let print_int =
-  label "print_int" ++
-  movq !%rdi !%rsi ++
-  movq (ilab "S_int") !%rdi ++
-  xorq !%rax !%rax ++
-  call "printf" ++
+let function_ (f, e) =
+  label ("F_" ^ f.fn_name) ++
+  expr empty_env e ++
   ret
 
-let file ?debug:(b=false) dl =
-  debug := b;
+
+let print =
+  label "print" ++
+  List.fold_left (++) nop (List.map popq [r12; rdi; rsi; rdx; rcx; r8; r9]) ++
+  xorl !%eax !%eax ++
+  call "printf" ++
+  subq (imm 48) !%rsp ++
+  pushq !%r12 ++
+  ret
+
+
+let file dl =
+  (* NOTE En-tête du binaire *)
+  let init_text =
+    globl "main" ++ label "main" ++
+    call "F_main" ++
+    xorq (reg rax) (reg rax) ++
+    ret in
+
+  (* NOTE Génération du code pour les fonctions *)
+  let functions =
+    let is_function = function
+      | TDfunction (func, expr) -> Some (func, expr)
+      | TDstruct _ -> None
+    in
+
+    List.fold_left (++) nop
+      (List.map function_ (List.filter_map is_function dl)) in
+
   (* TODO calcul offset champs *)
-  (* TODO code fonctions *) let funs = List.fold_left decl nop dl in
   { text =
-      globl "main" ++ label "main" ++
-      call "F_main" ++
-      xorq (reg rax) (reg rax) ++
-      ret ++
-      funs ++
-      print_int;
+      init_text ++
+      functions ++
+      print;
     (* TODO print pour d'autres valeurs *)
     (* TODO appel malloc de stdlib *)
     data =
-      label "S_int" ++ string "%ld" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
   ;
   }
