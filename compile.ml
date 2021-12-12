@@ -111,23 +111,44 @@ let rec expr env e =
 
   | TEprint el ->
     (* NOTE Génération du format pour printf *)
-    let fmt_label =
-      let create_fmt (acc, prefix) expr =
-        ( match expr.expr_typ with
-          | Tint -> (acc ^ prefix ^ "%ld", " ")
-          | Tstring -> (acc ^ prefix ^ "%s", "")
+    let fmt_label, el =
+      let create_fmt ((fmt_acc, prefix), expr_acc) e =
+        let asm_expr = expr env e in
+        ( match e.expr_typ with
+          | Tnil -> ((fmt_acc ^ prefix ^ "<nil>", " "), expr_acc)
+          | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), expr_acc @ [asm_expr])
+
+          | Tbool ->
+            let s_true = alloc_string "true" and s_false = alloc_string "false" in
+            let l_true = new_label () and l_end = new_label () in
+
+            let asm_expr =
+              asm_expr ++
+              cmpq (imm 0) !%rdi ++
+              jne l_true ++
+              movq (ilab s_false) !%rdi ++
+              jmp l_end ++
+              label l_true ++
+              movq (ilab s_true) !%rdi ++
+              label l_end in
+            ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+
+          | Tstring -> ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+
+          | Tptr _ -> ((fmt_acc ^ prefix ^ "%p", ""), expr_acc @ [asm_expr])
+
           | _ -> (* TODO *) assert false ) in
 
-      let fmt, _ = List.fold_left create_fmt ("", "") el
-      in alloc_string fmt in
+      let (fmt, _), el = List.fold_left create_fmt (("", ""), []) el
+      in alloc_string fmt, el in
+
 
     (* NOTE Génération du code *)
-    let eval_and_push acc expr = expr ++ acc ++ pushq !%rdi in
     let nb_args = (List.length el + 1) in
+    let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
 
-    nop ++ nop ++ nop ++
     subq (imm (reg_bytes * (max 0 (reg_max_args - nb_args)))) !%rsp ++
-    List.fold_right eval_and_push (List.map (expr env) el) nop ++
+    List.fold_right push_into_stack el nop ++
     pushq (ilab fmt_label) ++
     call "print" ++
     addq (imm (reg_bytes * (max nb_args reg_max_args))) !%rsp
