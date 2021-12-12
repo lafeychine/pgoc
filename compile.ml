@@ -40,14 +40,22 @@ let label s = nop ++ label s
 
 let debug = ref false
 
-let strings = Hashtbl.create 32
-let alloc_string =
+
+(* NOTE Constantes destinées à être dans .data *)
+let constants = Hashtbl.create 32
+
+let alloc_constant =
   let r = ref 0 in
-  fun s ->
-    incr r;
-    let l = "S_" ^ string_of_int !r in
-    Hashtbl.add strings l s;
-    l
+  fun constant ->
+    match Hashtbl.find_opt constants constant with
+    | Some label -> label
+    | None ->
+      incr r;
+      let label = "S_" ^ string_of_int !r in
+      Hashtbl.add constants constant label;
+      label
+
+
 
 let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
 let allocz n = movq (imm n) (reg rdi) ++ call "allocz"
@@ -86,7 +94,7 @@ let rec expr env e =
 
   | TEconstant (Cint x) -> movq (imm64 x) !%rdi
 
-  | TEconstant (Cstring s) -> movq (ilab (alloc_string s)) !%rdi
+  | TEconstant (Cstring s) -> movq (ilab (alloc_constant s)) !%rdi
 
   | TEnil -> xorq (reg rdi) (reg rdi)
 
@@ -96,8 +104,10 @@ let rec expr env e =
     (* TODO code pour OU logique lazy *) assert false 
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
     (* TODO code pour comparaison ints *) assert false 
+
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
     (* TODO code pour arithmetique ints *) assert false 
+
   | TEbinop (Beq | Bne as op, e1, e2) ->
     (* TODO code pour egalite toute valeur *) assert false 
   | TEunop (Uneg, e1) ->
@@ -119,7 +129,7 @@ let rec expr env e =
           | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), expr_acc @ [asm_expr])
 
           | Tbool ->
-            let s_true = alloc_string "true" and s_false = alloc_string "false" in
+            let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
             let l_true = new_label () and l_end = new_label () in
 
             let asm_expr =
@@ -140,7 +150,7 @@ let rec expr env e =
           | _ -> (* TODO *) assert false ) in
 
       let (fmt, _), el = List.fold_left create_fmt (("", ""), []) el
-      in alloc_string fmt, el in
+      in alloc_constant fmt, el in
 
 
     (* NOTE Génération du code *)
@@ -231,6 +241,6 @@ let file dl =
     (* TODO print pour d'autres valeurs *)
     (* TODO appel malloc de stdlib *)
     data =
-      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
+      (Hashtbl.fold (fun constant l d -> label l ++ string constant ++ d) constants nop)
   ;
   }
