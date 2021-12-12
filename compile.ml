@@ -106,7 +106,18 @@ let rec expr env e =
     (* TODO code pour comparaison ints *) assert false 
 
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
-    (* TODO code pour arithmetique ints *) assert false 
+    let asm_e1 = expr env e1 and asm_e2 = expr env e2 in
+    let instruction = (match op with
+        | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
+        | Bsub -> movq !%rdi !%rax ++ movq (ind rsp) !%rdi ++ subq !%rax !%rdi
+        | Bmul -> imulq (ind rsp) !%rdi (* NOTE Opération commutative *)
+        | Bdiv -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
+        | Bmod -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi )
+    in asm_e1 ++
+       pushq !%rdi ++
+       asm_e2 ++
+       instruction ++
+       addq (imm 8) !%rsp
 
   | TEbinop (Beq | Bne as op, e1, e2) ->
     (* TODO code pour egalite toute valeur *) assert false 
