@@ -58,7 +58,7 @@ function compareFiles()
 
     echo -ne " - $1: "
 
-    if DIFF_OUTPUT=$(diff -aBw "$2" "$3"); then
+    if DIFF_OUTPUT=$(diff -aB "$2" "$3"); then
 
         tput setaf 2; echo -n "OK"; tput setaf 7
 
@@ -67,7 +67,7 @@ function compareFiles()
         tput setaf 1; echo -n "KO"; tput setaf 7
 
         echo ""
-        echo "${DIFF_OUTPUT[0]}"
+        cat -E <(echo "${DIFF_OUTPUT[0]}")
 
         FAILED_TEST=true
 

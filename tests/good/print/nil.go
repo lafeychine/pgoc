@@ -3,10 +3,10 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Print(false, true, "\n")
+	fmt.Print(nil, "\n")
 }
 
 /*
 == Expected program output ==
-falsetrue
+<nil>
 */

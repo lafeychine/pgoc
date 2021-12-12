@@ -3,9 +3,11 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Print()
+	x := 2
+
+	fmt.Print(&x)
 }
 
 /*
-== Expected program output ==
+<nil>
 */
