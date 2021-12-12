@@ -6,3 +6,7 @@ _build/
 *.png
 *.svg
 *.swp
+
+a.out
+.gdb_history
+vgcore.*
