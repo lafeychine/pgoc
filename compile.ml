@@ -65,15 +65,13 @@ let sizeof = Typing.sizeof
 let new_label =
   let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
 
-type env = {
-  exit_label: string;
-  ofs_this: int;
-  nb_locals: int ref; (* maximum *)
-  next_local: int; (* 0, 1, ... *)
-}
 
-let empty_env =
-  { exit_label = ""; ofs_this = -1; nb_locals = ref 0; next_local = 0 }
+(* NOTE Environnement courant *)
+type env = {
+  offset_stack: int;      (* De combien la stack à été déplacée depuis le stockage de %rbp *)
+  first_id_local: int;    (* Quelle est la première variable locale *)
+  number_arguments: int;  (* Combien la fonction prend d'arguments *)
+}
 
 let mk_bool d = { expr_desc = d; expr_typ = Tbool }
 
@@ -103,19 +101,18 @@ let rec expr env e =
   | TEbinop (Bor, e1, e2) ->
     (* TODO code pour OU logique lazy *) assert false 
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
-    (* TODO code pour comparaison ints *) assert false 
+    (* TODO code pour comparaison ints *) assert false
 
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
-    let asm_e1 = expr env e1 and asm_e2 = expr env e2 in
     let instruction = (match op with
         | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
         | Bsub -> movq !%rdi !%rax ++ movq (ind rsp) !%rdi ++ subq !%rax !%rdi
         | Bmul -> imulq (ind rsp) !%rdi (* NOTE Opération commutative *)
         | Bdiv -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
         | Bmod -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi )
-    in asm_e1 ++
+    in expr env e1 ++
        pushq !%rdi ++
-       asm_e2 ++
+       expr { env with offset_stack = env.offset_stack + reg_bytes } e2 ++
        instruction ++
        addq (imm 8) !%rsp
 
@@ -131,13 +128,17 @@ let rec expr env e =
     (* TODO code pour * *) assert false 
 
   | TEprint el ->
+    let nb_args = List.length el + 1 in
+    let offset = max 0 (reg_max_args - nb_args) in
+
     (* NOTE Génération du format pour printf *)
     let fmt_label, el =
-      let create_fmt ((fmt_acc, prefix), expr_acc) e =
-        let asm_expr = expr env e in
+      let create_fmt ((fmt_acc, prefix), offset, expr_acc) e =
+        let offset_stack = env.offset_stack + reg_bytes * offset in
+        let asm_expr = expr { env with offset_stack = offset_stack } e in
         ( match e.expr_typ with
-          | Tnil -> ((fmt_acc ^ prefix ^ "<nil>", " "), expr_acc)
-          | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), expr_acc @ [asm_expr])
+          | Tnil -> ((fmt_acc ^ prefix ^ "<nil>", " "), offset - 2, expr_acc)
+          | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), offset - 2, expr_acc @ [asm_expr])
 
           | Tbool ->
             let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
@@ -152,23 +153,21 @@ let rec expr env e =
               label l_true ++
               movq (ilab s_true) !%rdi ++
               label l_end in
-            ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+            ((fmt_acc ^ "%s", ""), offset - 2, expr_acc @ [asm_expr])
 
-          | Tstring -> ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+          | Tstring -> ((fmt_acc ^ "%s", ""), offset - 2, expr_acc @ [asm_expr])
 
-          | Tptr _ -> ((fmt_acc ^ prefix ^ "%p", ""), expr_acc @ [asm_expr])
+          | Tptr _ -> ((fmt_acc ^ prefix ^ "%p", ""), offset - 2, expr_acc @ [asm_expr])
 
           | _ -> (* TODO *) assert false ) in
 
-      let (fmt, _), el = List.fold_left create_fmt (("", ""), []) el
+      let (fmt, _), _, el = List.fold_left create_fmt (("", ""), (* TODO *)offset + 1, []) el
       in alloc_constant fmt, el in
 
-
     (* NOTE Génération du code *)
-    let nb_args = (List.length el + 1) in
     let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
 
-    subq (imm (reg_bytes * (max 0 (reg_max_args - nb_args)))) !%rsp ++
+    subq (imm (reg_bytes * offset)) !%rsp ++
     List.fold_right push_into_stack el nop ++
     pushq (ilab fmt_label) ++
     call "print" ++
@@ -176,17 +175,50 @@ let rec expr env e =
 
 
   | TEident x ->
-    (* TODO code pour x *) assert false
-  | TEassign ([{expr_desc=TEident x}], [e1]) ->
-    (* TODO code pour x := e *) assert false
+    let offset = env.offset_stack - reg_bytes * (x.v_id - env.first_id_local) in
+    movq (ind ~ofs:offset rsp) !%rdi
+
+  | TEassign ([{ expr_desc = TEident x }], [e]) ->
+    let offset = env.offset_stack - reg_bytes * (x.v_id - env.first_id_local) in
+    expr env e ++
+    movq !%rdi (ind ~ofs:offset rsp)
+
   | TEassign ([lv], [e1]) ->
     (* TODO code pour x1,... := e1,... *) assert false
   | TEassign (_, _) ->
     assert false
 
+  | TEblock [{ expr_desc = TEvars _ }; { expr_desc = TEassign _ }] ->
+    (* NOTE Rien à faire ici: Cas particulier d'assignation *)
+    nop
+
   | TEblock el ->
-    (* TODO *)
-    List.fold_left (++) nop (List.map (expr env) el)
+    (* NOTE Séparation entre variables et séquences *)
+    let var_exprs, seq_exprs =
+      let expand_assign acc expr =
+        match expr.expr_desc with
+        | TEblock [{ expr_desc = TEvars _ } as e1; { expr_desc = TEassign _ } as e2] ->
+          acc @ [ e1; e2 ]
+        | _ -> acc @ [ expr ] in
+      let filter_block_expr expr =
+        match expr.expr_desc with
+        | TEvars _ -> Either.Left expr
+        | _ -> Either.Right expr
+      in List.partition_map filter_block_expr
+        (List.fold_left expand_assign [] el) in
+
+    (* NOTE Création du nouvel environnement *)
+    let locals_block_number = List.length var_exprs in
+    let offset_var = reg_bytes * locals_block_number in
+    let env = {
+      env with
+      offset_stack = env.offset_stack + offset_var;
+    } in
+
+    (* NOTE Génération du code *)
+    subq (imm offset_var) !%rsp ++
+    List.fold_left (++) nop (List.map (expr env) seq_exprs) ++
+    addq (imm offset_var) !%rsp
 
   | TEif (e1, e2, e3) ->
     (* TODO code pour if *) assert false
@@ -195,24 +227,45 @@ let rec expr env e =
   | TEnew ty ->
     (* TODO code pour new S *) assert false
   | TEcall (f, el) ->
-    (* TODO code pour appel fonction *) assert false
+    subq (imm (sizeof f.fn_typ)) !%rsp ++
+    call ("F_" ^ f.fn_name) ++
+    popq rdi
+
   | TEdot (e1, {f_ofs=ofs}) ->
     (* TODO code pour e.f *) assert false
   | TEvars _ ->
     assert false (* fait dans block *)
+
   | TEreturn [] ->
     (* TODO code pour return e *) assert false
-  | TEreturn [e1] ->
-    (* TODO code pour return e1,... *) assert false
-  | TEreturn _ ->
-    assert false
+
+  | TEreturn [e] ->
+    let offset = 2 * reg_bytes + env.offset_stack in
+
+    expr env e ++
+    movq !%rdi (ind ~ofs:(offset) rsp)
+
+  | TEreturn _ -> assert false
+
   | TEincdec (e1, op) ->
     (* TODO code pour return e++, e-- *) assert false
 
 
 let function_ (f, e) =
+  let empty_env = { 
+    offset_stack = 0;
+    first_id_local = 0;
+    number_arguments = List.length f.fn_params
+  } in
+
   label ("F_" ^ f.fn_name) ++
+  pushq !%rbp ++
+  movq !%rsp !%rbp ++
+
   expr empty_env e ++
+
+  movq !%rbp !%rsp ++
+  popq rbp ++
   ret
 
 
