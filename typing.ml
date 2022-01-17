@@ -568,11 +568,13 @@ let phase2 structures functions = function
 
 (* 3. type check function bodies *)
 let rec sizeof = function
+  | Tvoid | Tnil -> 0
+
   | Tint | Tbool | Tstring | Tptr _ -> 8
 
   | Tstruct { s_fields } -> Seq.fold_left (fun acc { f_typ } -> acc + sizeof f_typ) 0 (Hashtbl.to_seq_values s_fields)
 
-  | _ -> (* TODO *) assert false
+  | Tmany typs -> List.fold_left (fun acc typ -> acc + sizeof typ) 0 typs
 
 
 let decl structures functions = function
