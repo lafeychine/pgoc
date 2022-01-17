@@ -329,20 +329,19 @@ and expr_desc structures functions env loc pexpr_desc =
     let structure_expr, rt = expr env e in
     let field =
       match structure_expr.expr_desc with
-      | TEdot (_, field) -> field
-
-      | TEident { v_typ } -> (
-          match v_typ with
+      | TEdot (_, { f_typ = typ })
+      | TEident { v_typ = typ } -> (
+          match typ with
           | Tptr (Tstruct { s_name })
           | Tstruct { s_name } ->
             let structure = Context.get s_name structures in
             ( match Hashtbl.find_opt structure.s_fields id with
               | Some field -> field
               | None -> error (Some loc)
-                          (sprintf "type %s has no field %s" (get_tast_type_name v_typ) id))
+                          (sprintf "type %s has no field %s" (get_tast_type_name typ) id))
 
           | _ -> error (Some loc)
-                   (sprintf "type %s is not a structure" (get_tast_type_name v_typ)))
+                   (sprintf "type %s is not a structure" (get_tast_type_name typ)))
 
       | TEnil -> error (Some loc) "use of untyped nil"
       | _ -> error (Some loc) "use of dot syntax on a non-identifier" in
@@ -374,10 +373,10 @@ and expr_desc structures functions env loc pexpr_desc =
     in List.iter2 check_type left (unfold_expr_typ right);
 
     (* NOTE Vérification des l-values *)
-    ( let check_lvalue expr =
-        if not (is_lvalue env expr) then
-          error (Some loc) "cannot assign to a non-left value"
-      in List.iter check_lvalue left);
+    let check_lvalue expr =
+      if not (is_lvalue env expr) then
+        error (Some loc) "cannot assign to a non-left value"
+    in List.iter check_lvalue left;
 
     new_stmt (TEassign (left, right)), false
 
@@ -616,6 +615,7 @@ let decl structures functions = function
   | PDstruct { ps_name = { id; loc } } ->
     let structure = Context.get id structures in
 
+    (* NOTE Vérification des structures récursives *)
     ( let rec get_recursive_struct_field { s_fields } acc =
         Seq.fold_left (find_recursive_struct_field acc) None (Hashtbl.to_seq_values s_fields)
       and find_recursive_struct_field acc inv field =
@@ -629,7 +629,13 @@ let decl structures functions = function
       match get_recursive_struct_field structure [ id ] with
       | Some { f_name } ->
         error (Some loc) (sprintf "recursive field %s in the struct %s" f_name id)
-      | None -> ());
+      | None -> () );
+
+    (* NOTE Remplissage des offset de champs *)
+    ( let fill_field_offset _ field offset =
+        field.f_ofs <- offset;
+        offset + sizeof field.f_typ
+      in ignore (Hashtbl.fold fill_field_offset structure.s_fields 0) );
 
     TDstruct structure
 
