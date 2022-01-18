@@ -98,14 +98,11 @@ type env = {
   locals: (int * int) Stack.M.t;
 }
 
-let mk_bool d = { expr_desc = d; expr_typ = Tbool }
 
-(* f reçoit le label correspondant à ``renvoyer vrai'' *)
-let compile_bool f =
-  let l_true = new_label () and l_end = new_label () in
-  f l_true ++
-  movq (imm 0) (reg rdi) ++ jmp l_end ++
-  label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
+let get_offset env id =
+  match Stack.search id env.arguments with
+  | Some (_, offset) -> offset + 8
+  | None -> - (snd (Stack.get id env.locals))
 
 let rec expr env e =
   match e.expr_desc with
@@ -122,9 +119,9 @@ let rec expr env e =
   | TEnil -> xorq (reg rdi) (reg rdi)
 
   | TEbinop (Band, e1, e2) ->
-    (* TODO code pour ET logique lazy *) assert false 
+    (* TODO code pour ET logique lazy *) assert false
   | TEbinop (Bor, e1, e2) ->
-    (* TODO code pour OU logique lazy *) assert false 
+    (* TODO code pour OU logique lazy *) assert false
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
     (* TODO code pour comparaison ints *) assert false
 
@@ -142,15 +139,15 @@ let rec expr env e =
        addq (imm 8) !%rsp
 
   | TEbinop (Beq | Bne as op, e1, e2) ->
-    (* TODO code pour egalite toute valeur *) assert false 
+    (* TODO code pour egalite toute valeur *) assert false
   | TEunop (Uneg, e1) ->
-    (* TODO code pour negation ints *) assert false 
+    (* TODO code pour negation ints *) assert false
   | TEunop (Unot, e1) ->
-    (* TODO code pour negation bool *) assert false 
+    (* TODO code pour negation bool *) assert false
   | TEunop (Uamp, e1) ->
-    (* TODO code pour & *) assert false 
+    (* TODO code pour & *) assert false
   | TEunop (Ustar, e1) ->
-    (* TODO code pour * *) assert false 
+    (* TODO code pour * *) assert false
 
   | TEprint el ->
     let nb_args = List.length el + 1 in
@@ -219,30 +216,30 @@ let rec expr env e =
 
 
   | TEident { v_id; v_typ } ->
-    let _, offset = Stack.get v_id env.locals in
+    let offset = get_offset env v_id in
 
     ( match v_typ with
-      | Tstruct s -> leaq (ind ~ofs:(-offset) rbp) rdi
-      | _ -> movq (ind ~ofs:(-offset) rbp) !%rdi )
+      | Tstruct s -> leaq (ind ~ofs:offset rbp) rdi
+      | _ -> movq (ind ~ofs:offset rbp) !%rdi )
 
   | TEassign ([{ expr_desc = TEident { v_id; v_typ } }], [ expr_assign ]) ->
-    let _, offset = Stack.get v_id env.locals in
+    let offset = get_offset env v_id in
 
     expr env expr_assign ++
     ( match v_typ with
       | Tstruct s -> nop
-      | _ -> movq !%rdi (ind ~ofs:(-offset) rbp) )
+      | _ -> movq !%rdi (ind ~ofs:offset rbp) )
 
   | TEassign ([{ expr_desc = TEdot ( e, { f_ofs } )}], [ expr_assign ]) ->
-    let _, offset =
+    let offset =
       let rec get_var_id { expr_desc } =
         match expr_desc with
         | TEident { v_id } -> v_id
         | TEdot (e, _) -> get_var_id e
         | _ -> assert false
-      in Stack.get (get_var_id e) env.locals in
+      in get_offset env (get_var_id e) in
 
-    leaq (ind ~ofs:(-offset) rbp) rdi ++
+    leaq (ind ~ofs:offset rbp) rdi ++
     pushq !%rdi ++
     expr env expr_assign ++
     popq rax ++
@@ -286,7 +283,6 @@ let rec expr env e =
         (Stack.add var.v_id (sizeof var.v_typ, offset + size) locals, offset + size)
       in List.fold_left (List.fold_left add_to_env) (env.locals, 0) vars in
 
-
     (* NOTE Génération du code *)
     subq (imm offset) !%rsp ++
     memset offset rsp ++
@@ -299,6 +295,7 @@ let rec expr env e =
     (* TODO code pour for *) assert false
   | TEnew ty ->
     (* TODO code pour new S *) assert false
+
   | TEcall (f, el) ->
     (* NOTE Décalage afin d'acceuillir les résultats *)
     ( match f.fn_typ with
@@ -312,15 +309,15 @@ let rec expr env e =
 
 
   | TEdot (e, { f_ofs }) ->
-    let _, offset =
+    let offset =
       let rec get_var_id { expr_desc } =
         match expr_desc with
         | TEident { v_id } -> v_id
         | TEdot (e, _) -> get_var_id e
         | _ -> assert false
-      in Stack.get (get_var_id e) env.locals in
+      in get_offset env (get_var_id e) in
 
-    movq (ind ~ofs:(f_ofs - offset) rbp) !%rdi
+    movq (ind ~ofs:(offset + f_ofs) rbp) !%rdi
 
   (* NOTE Ne devrait jamais arriver: TEvars est traité dans TEblock *)
   | TEvars _ -> assert false
