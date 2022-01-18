@@ -158,34 +158,54 @@ let rec expr env e =
 
     (* NOTE Génération du format pour printf *)
     let fmt_label, el =
-      let create_fmt ((fmt_acc, prefix), offset, expr_acc) e =
+      let rec create_fmt ((fmt_acc, prefix), expr_acc) e =
         let asm_expr = expr env e in
-        ( match e.expr_typ with
-          | Tnil -> ((fmt_acc ^ prefix ^ "<nil>", " "), offset - 2, expr_acc)
-          | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), offset - 2, expr_acc @ [asm_expr])
 
-          | Tbool ->
-            let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
-            let l_true = new_label () and l_end = new_label () in
+        match e.expr_typ with
+        | Tnil
+        | Tptr _ -> ((fmt_acc ^ prefix ^ "%p", " "), expr_acc @ [asm_expr])
 
-            let asm_expr =
-              asm_expr ++
-              cmpq (imm 0) !%rdi ++
-              jne l_true ++
-              movq (ilab s_false) !%rdi ++
-              jmp l_end ++
-              label l_true ++
-              movq (ilab s_true) !%rdi ++
-              label l_end in
-            ((fmt_acc ^ "%s", ""), offset - 2, expr_acc @ [asm_expr])
+        | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), expr_acc @ [asm_expr])
 
-          | Tstring -> ((fmt_acc ^ "%s", ""), offset - 2, expr_acc @ [asm_expr])
+        | Tbool ->
+          let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
+          let l_true = new_label () and l_end = new_label () in
 
-          | Tptr _ -> ((fmt_acc ^ prefix ^ "%p", ""), offset - 2, expr_acc @ [asm_expr])
+          let asm_expr =
+            asm_expr ++
+            cmpq (imm 0) !%rdi ++
+            jne l_true ++
+            movq (ilab s_false) !%rdi ++
+            jmp l_end ++
+            label l_true ++
+            movq (ilab s_true) !%rdi ++
+            label l_end in
 
-          | _ -> (* TODO *) assert false ) in
+          ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
 
-      let (fmt, _), _, el = List.fold_left create_fmt (("", ""), (* TODO *)offset + 1, []) el
+        | Tstring ->
+          let s_empty = alloc_constant "" in
+          let l_true = new_label () in
+
+          let asm_expr =
+            asm_expr ++
+            cmpq (imm 0) !%rdi ++
+            jne l_true ++
+            movq (ilab s_empty) !%rdi ++
+            label l_true in
+
+          ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+
+        | Tstruct s ->
+          let field = Hashtbl.find s.s_fields "x" in
+          let asm_expr = expr env { expr_desc = TEdot (e, field); expr_typ = field.f_typ } in
+
+          ((fmt_acc ^ "{" ^ "}", " "), expr_acc @ [asm_expr])
+
+        | Tvoid
+        | Tmany _ -> assert false in
+
+      let (fmt, _), el = List.fold_left create_fmt (("", ""), []) el
       in alloc_constant fmt, el in
 
     (* NOTE Génération du code *)
@@ -198,16 +218,37 @@ let rec expr env e =
     addq (imm (reg_bytes * (max nb_args reg_max_args))) !%rsp
 
 
-  | TEident { v_id } ->
+  | TEident { v_id; v_typ } ->
     let _, offset = Stack.get v_id env.locals in
 
-    movq (ind ~ofs:(-offset) rbp) !%rdi
+    ( match v_typ with
+      | Tstruct s -> leaq (ind ~ofs:(-offset) rbp) rdi
+      | _ -> movq (ind ~ofs:(-offset) rbp) !%rdi )
 
-  | TEassign ([{ expr_desc = TEident { v_id } }], [e]) ->
+  | TEassign ([{ expr_desc = TEident { v_id; v_typ } }], [ expr_assign ]) ->
     let _, offset = Stack.get v_id env.locals in
 
-    expr env e ++
-    movq !%rdi (ind ~ofs:(-offset) rbp)
+    expr env expr_assign ++
+    ( match v_typ with
+      | Tstruct s -> nop
+      | _ -> movq !%rdi (ind ~ofs:(-offset) rbp) )
+
+  | TEassign ([{ expr_desc = TEdot ( e, { f_ofs } )}], [ expr_assign ]) ->
+    let _, offset =
+      let rec get_var_id { expr_desc } =
+        match expr_desc with
+        | TEident { v_id } -> v_id
+        | TEdot (e, _) -> get_var_id e
+        | _ -> assert false
+      in Stack.get (get_var_id e) env.locals in
+
+    leaq (ind ~ofs:(-offset) rbp) rdi ++
+    pushq !%rdi ++
+    expr env expr_assign ++
+    popq rax ++
+    ( match expr_assign.expr_typ with
+      | Tstruct s -> nop
+      | _ -> movq !%rdi (ind ~ofs:f_ofs rax) )
 
   | TEassign ([{ expr_desc = TEunop (Ustar, { expr_desc = TEident x }) }], [e]) ->
     (* let offset = (\* TODO *\) env.offset_stack - reg_bytes * (x.v_id - Option.get env.first_var_id) in *)
@@ -270,8 +311,16 @@ let rec expr env e =
     popq rdi
 
 
-  | TEdot (e1, {f_ofs=ofs}) ->
-    (* TODO code pour e.f *) assert false
+  | TEdot (e, { f_ofs }) ->
+    let _, offset =
+      let rec get_var_id { expr_desc } =
+        match expr_desc with
+        | TEident { v_id } -> v_id
+        | TEdot (e, _) -> get_var_id e
+        | _ -> assert false
+      in Stack.get (get_var_id e) env.locals in
+
+    movq (ind ~ofs:(f_ofs - offset) rbp) !%rdi
 
   (* NOTE Ne devrait jamais arriver: TEvars est traité dans TEblock *)
   | TEvars _ -> assert false
