@@ -33,6 +33,7 @@ open X86_64
 (* NOTE Quelques constantes *)
 let reg_bytes = 8
 let reg_max_args = 6  (* RDI, RSI, RDX, RCX, R8, R9 *)
+let context_bytes = 16
 
 
 (* NOTE Redéfinition de label: Gain de lisibilité *)
@@ -50,12 +51,21 @@ module Stack = struct
   let get = M.find
   let search = M.find_opt
 
+  let size m =
+    let f _ (_, v) acc = acc + v
+    in M.fold f m 0
+
   let find f m =
     let filter k v = function
       | Some (k, v) -> Some (k, v)
       | None -> if f k v then Some (k, v) else None
     in M.fold filter m None
 end
+
+type env = {
+  arguments: (int * int) Stack.M.t;
+  locals: (int * int) Stack.M.t;
+}
 
 
 (* NOTE Constantes destinées à être dans .data *)
@@ -81,9 +91,9 @@ let memset size register =
   | 0 -> nop
   | 8 -> movq (imm 0) (ind register)
   | _ -> movq !%register !%rdi ++
-         movq (imm size) !%rsi ++
-         call "init_memory"
-
+         movq (imm 0) !%rsi ++
+         movq (imm size) !%rdx ++
+         call "memset"
 
 let sizeof = Typing.sizeof
 
@@ -91,17 +101,35 @@ let new_label =
   let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
 
 
-(* NOTE Environnement courant *)
-type env = {
-  arguments: (int * int) Stack.M.t;
-  locals: (int * int) Stack.M.t;
-}
+(* NOTE Allocation d'une frame de stack *)
+let stack_frame ?(register=rbp) asm =
+  pushq !%register ++
+  movq !%rsp !%register ++
+  asm ++
+  movq !%register !%rsp ++
+  popq register
 
 
+(* NOTE Forcer l'alignement de la stack *)
+let align_stack = andq (imm (-16)) !%rsp
+
+
+(* NOTE Déplacement de la pile, et initialisation à 0 *)
+let allocz offset asm =
+  match offset with
+  | 0 -> asm
+  | _ -> subq (imm offset) !%rsp ++
+         memset offset rsp ++
+         asm ++
+         addq (imm offset) !%rsp
+
+
+(* NOTE Récupération de l'offset entre rbp et la variable *)
 let get_offset env id =
   match Stack.search id env.arguments with
-  | Some (_, offset) -> offset + 16
+  | Some (_, offset) -> offset + context_bytes
   | None -> - (snd (Stack.get id env.locals))
+
 
 let rec expr env e =
   match e.expr_desc with
@@ -125,12 +153,13 @@ let rec expr env e =
     (* TODO code pour comparaison ints *) assert false
 
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
-    let instruction = (match op with
-        | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
-        | Bsub -> movq !%rdi !%rax ++ movq (ind rsp) !%rdi ++ subq !%rax !%rdi
-        | Bmul -> imulq (ind rsp) !%rdi (* NOTE Opération commutative *)
-        | Bdiv -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
-        | Bmod -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi )
+    let instruction =
+      match op with
+      | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
+      | Bsub -> movq !%rdi !%rax ++ movq (ind rsp) !%rdi ++ subq !%rax !%rdi
+      | Bmul -> imulq (ind rsp) !%rdi (* NOTE Opération commutative *)
+      | Bdiv -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
+      | Bmod -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi
     in expr env e1 ++
        pushq !%rdi ++
        expr env e2 ++
@@ -207,18 +236,17 @@ let rec expr env e =
     (* NOTE Génération du code *)
     let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
 
-    movq !%rsp !%r12 ++
+    stack_frame ~register:rbx (
+      align_stack ++
 
-    andq (imm (-16)) !%rsp ++
-    ( if nb_args > 6 && nb_args mod 2 == 1 then
-        subq (imm 8) !%rsp else nop ) ++
+      ( if nb_args > 6 && nb_args mod 2 == 1 then
+          subq (imm 8) !%rsp else nop ) ++
 
-    subq (imm (reg_bytes * offset)) !%rsp ++
-    List.fold_right push_into_stack el nop ++
-    pushq (ilab fmt_label) ++
-    call "print" ++
-
-    movq !%r12 !%rsp
+      subq (imm (reg_bytes * offset)) !%rsp ++
+      List.fold_right push_into_stack el nop ++
+      pushq (ilab fmt_label) ++
+      call "print"
+    )
 
 
   | TEident { v_id; v_typ } ->
@@ -290,10 +318,11 @@ let rec expr env e =
       in List.fold_left (List.fold_left add_to_env) (env.locals, 0) vars in
 
     (* NOTE Génération du code *)
-    subq (imm offset) !%rsp ++
-    memset offset rsp ++
-    List.fold_left (++) nop (List.map (expr { env with locals = locals }) seq_exprs) ++
-    addq (imm offset) !%rsp
+    allocz offset (
+      List.fold_left (++) nop
+        (List.map (expr { env with locals = locals }) seq_exprs)
+    )
+
 
   | TEif (e1, e2, e3) ->
     (* TODO code pour if *) assert false
@@ -303,23 +332,21 @@ let rec expr env e =
     (* TODO code pour new S *) assert false
 
   | TEcall (f, el) ->
-    let sizeof_args =
-      List.fold_left (+) 0
-        (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params) in
-
     (* NOTE Décalage afin d'acceuillir les résultats + arguments *)
-    subq (imm (sizeof f.fn_typ + sizeof_args)) !%rsp ++
+    let offset =
+      let sizeof_args =
+        List.fold_left (+) 0
+          (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params)
+      in sizeof f.fn_typ + sizeof_args in
 
     (* NOTE Déplacement des arguments *)
     let push_into_stack e acc = acc ++ (expr env e) ++ pushq !%rdi in
 
-    List.fold_right push_into_stack el nop ++
-
     (* NOTE Génération du code *)
-    List.fold_right (fun e acc -> expr env e ++ acc) el nop ++
-    call ("F_" ^ f.fn_name) ++
-    popq rdi
-
+    allocz offset (
+      List.fold_right push_into_stack el nop ++
+      call ("F_" ^ f.fn_name)
+    )
 
   | TEdot (e, { f_ofs }) ->
     let offset =
@@ -338,11 +365,10 @@ let rec expr env e =
   | TEreturn [] -> nop
 
   | TEreturn [e] ->
-    (* let offset = 2 * reg_bytes + env.offset_stack in *)
+    let sizeof_args = Stack.size env.arguments in
 
-    (* expr env e ++ *)
-    (* movq !%rdi (ind ~ofs:(offset) rsp) *)
-    assert false
+    expr env e ++
+    movq !%rdi (ind ~ofs:(sizeof_args + context_bytes) rbp)
 
   | TEreturn _ -> assert false
 
@@ -363,36 +389,17 @@ let function_ (f, e) =
   } in
 
   label ("F_" ^ f.fn_name) ++
-  pushq !%rbp ++
-  movq !%rsp !%rbp ++
-
-  expr empty_env e ++
-
-  movq !%rbp !%rsp ++
-  popq rbp ++
+  stack_frame (expr empty_env e) ++
   ret
 
 
-let libraries =
-  let print =
-    List.fold_left (++) nop (List.map popq [r13; rdi; rsi; rdx; rcx; r8; r9]) ++
-    xorl !%eax !%eax ++
-    call "printf" ++
-    subq (imm 48) !%rsp ++
-    pushq !%r13
-  in
-
-  let init_memory =
-    cmpq (imm 0) !%rsi ++
-    je "init_memory_end" ++
-    decq !%rsi ++
-    movb (imm 0) (ind ~index:rsi rdi) ++
-    jmp "init_memory" ++
-    label "init_memory_end"
-  in
-
-  label "print" ++ print ++ ret ++
-  label "init_memory" ++ init_memory ++ ret
+let print =
+  label "print" ++
+  List.fold_left (++) nop (List.map popq [r13; rdi; rsi; rdx; rcx; r8; r9]) ++
+  xorl !%eax !%eax ++
+  call "printf" ++
+  pushq !%r13 ++
+  ret
 
 
 let file dl =
@@ -417,7 +424,7 @@ let file dl =
   { text =
       init_text ++
       functions ++
-      libraries;
+      print;
     (* TODO print pour d'autres valeurs *)
     (* TODO appel malloc de stdlib *)
     data =
