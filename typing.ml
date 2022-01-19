@@ -516,8 +516,12 @@ let phase2 structures functions = function
       error (Some loc) (sprintf "function %s redeclared" id);
 
     (* NOTE Vérification de l'unicité des noms des paramètres *)
-    ( let is_same_identifier ({ id = id_x }, _) ({ id = id_y }, _) = id_x = id_y
-      in match Lib.find_opt_duplicate_item is_same_identifier pl with
+    ( let rec find_opt_duplicate_item (f_eq: 'a -> 'a -> bool) (list: 'a list) =
+        match list with
+        | []      -> None
+        | x :: xs -> if List.exists (f_eq x) xs then Some x else find_opt_duplicate_item f_eq xs in
+      let is_same_identifier ({ id = id_x }, _) ({ id = id_y }, _) = id_x = id_y
+      in match find_opt_duplicate_item is_same_identifier pl with
       | Some ({ id = id_param; loc = loc_param }, _) ->
         error (Some loc_param) (sprintf "duplicate parameter %s in function %s" id_param id)
       | None -> () );
