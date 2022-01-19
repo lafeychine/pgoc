@@ -77,13 +77,12 @@ let alloc_constant =
 let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
 
 let memset size register =
-  if size = 8 then
-    movq (imm 0) (ind register)
-  else
-    movq !%register !%rdi ++
-    movq (imm 0) !%rsi ++
-    movq (imm size) !%rdx ++
-    call "memset"
+  match size with
+  | 0 -> nop
+  | 8 -> movq (imm 0) (ind register)
+  | _ -> movq !%register !%rdi ++
+         movq (imm size) !%rsi ++
+         call "init_memory"
 
 
 let sizeof = Typing.sizeof
@@ -101,7 +100,7 @@ type env = {
 
 let get_offset env id =
   match Stack.search id env.arguments with
-  | Some (_, offset) -> offset + 8
+  | Some (_, offset) -> offset + 16
   | None -> - (snd (Stack.get id env.locals))
 
 let rec expr env e =
@@ -208,11 +207,18 @@ let rec expr env e =
     (* NOTE Génération du code *)
     let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
 
+    movq !%rsp !%r12 ++
+
+    andq (imm (-16)) !%rsp ++
+    ( if nb_args > 6 && nb_args mod 2 == 1 then
+        subq (imm 8) !%rsp else nop ) ++
+
     subq (imm (reg_bytes * offset)) !%rsp ++
     List.fold_right push_into_stack el nop ++
     pushq (ilab fmt_label) ++
     call "print" ++
-    addq (imm (reg_bytes * (max nb_args reg_max_args))) !%rsp
+
+    movq !%r12 !%rsp
 
 
   | TEident { v_id; v_typ } ->
@@ -297,10 +303,17 @@ let rec expr env e =
     (* TODO code pour new S *) assert false
 
   | TEcall (f, el) ->
-    (* NOTE Décalage afin d'acceuillir les résultats *)
-    ( match f.fn_typ with
-      | Tmany _ -> nop
-      | typ -> subq (imm (sizeof f.fn_typ)) !%rsp ) ++
+    let sizeof_args =
+      List.fold_left (+) 0
+        (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params) in
+
+    (* NOTE Décalage afin d'acceuillir les résultats + arguments *)
+    subq (imm (sizeof f.fn_typ + sizeof_args)) !%rsp ++
+
+    (* NOTE Déplacement des arguments *)
+    let push_into_stack e acc = acc ++ (expr env e) ++ pushq !%rdi in
+
+    List.fold_right push_into_stack el nop ++
 
     (* NOTE Génération du code *)
     List.fold_right (fun e acc -> expr env e ++ acc) el nop ++
@@ -360,14 +373,26 @@ let function_ (f, e) =
   ret
 
 
-let print =
-  label "print" ++
-  List.fold_left (++) nop (List.map popq [r12; rdi; rsi; rdx; rcx; r8; r9]) ++
-  xorl !%eax !%eax ++
-  call "printf" ++
-  subq (imm 48) !%rsp ++
-  pushq !%r12 ++
-  ret
+let libraries =
+  let print =
+    List.fold_left (++) nop (List.map popq [r13; rdi; rsi; rdx; rcx; r8; r9]) ++
+    xorl !%eax !%eax ++
+    call "printf" ++
+    subq (imm 48) !%rsp ++
+    pushq !%r13
+  in
+
+  let init_memory =
+    cmpq (imm 0) !%rsi ++
+    je "init_memory_end" ++
+    decq !%rsi ++
+    movb (imm 0) (ind ~index:rsi rdi) ++
+    jmp "init_memory" ++
+    label "init_memory_end"
+  in
+
+  label "print" ++ print ++ ret ++
+  label "init_memory" ++ init_memory ++ ret
 
 
 let file dl =
@@ -392,7 +417,7 @@ let file dl =
   { text =
       init_text ++
       functions ++
-      print;
+      libraries;
     (* TODO print pour d'autres valeurs *)
     (* TODO appel malloc de stdlib *)
     data =
