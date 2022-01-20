@@ -4,7 +4,7 @@ CALL_PATH="$(dirname "$0")"
 
 MSG_EXPECTED_COMPILER="== Expected compiler output =="
 MSG_EXPECTED_PROGRAM="== Expected program output =="
-PGOC="./pgoc --no-pretty"
+PGOC="./pgoc"
 ASSEMBLY="gcc -no-pie"
 
 
