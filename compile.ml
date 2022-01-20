@@ -11,6 +11,9 @@ let context_bytes = 16
 (* NOTE Redéfinition de label: Gain de lisibilité *)
 let label s = nop ++ label s
 
+let new_label =
+  let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
+
 
 (* NOTE Création des contextes *)
 module Stack = struct
@@ -61,8 +64,6 @@ let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
 
 let sizeof = Typing.sizeof
 
-let new_label =
-  let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
 
 
 (* NOTE Allocation d'une frame de stack *)
@@ -114,6 +115,19 @@ let rec get_ident_from_dot e =
   | _ -> assert false
 
 
+(* NOTE Bloc assembleur if/else *)
+let asm_if_else ?(cmp=imm 0) ?(jump=je) expr if_block else_block =
+  let l_else = new_label () and l_end = new_label ()
+  in expr ++
+     cmpq cmp !%rdi ++
+     jump l_else ++
+     if_block ++
+     jmp l_end ++
+     label l_else ++
+     else_block ++
+     label l_end
+
+
 let rec expr env e =
   match e.expr_desc with
   | TEskip -> nop
@@ -128,36 +142,14 @@ let rec expr env e =
 
   | TEnil -> xorq (reg rdi) (reg rdi)
 
-  | TEbinop (Bor, e1, e2) ->
-    let l_end = new_label () in
+  | TEbinop (Bor, e1, e2) -> asm_if_else (expr env e1) nop (expr env e2)
 
-    expr env e1 ++
-    cmpq (imm 1) !%rdi ++
-    je l_end ++
-    expr env e2 ++
-    label l_end
-
-  | TEbinop (Band, e1, e2) ->
-    let l_end = new_label () in
-
-    expr env e1 ++
-    cmpq (imm 0) !%rdi ++
-    je l_end ++
-    expr env e2 ++
-    label l_end
+  | TEbinop (Band, e1, e2) -> asm_if_else (expr env e1) (expr env e2) nop
 
   | TEbinop (op, e1, e2) ->
     let asm_binop =
-      let assembly_cmp instruction =
-        let l_true = new_label () and l_end = new_label () in
-
-        cmpq (ind rsp) !%rdi ++
-        instruction l_true ++
-        movq (imm 0) !%rdi ++
-        jmp l_end ++
-        label l_true ++
-        movq (imm 1) !%rdi ++
-        label l_end in
+      let assembly_cmp jump =
+        asm_if_else ~cmp:(ind rsp) ~jump:jump nop (movq (imm 0) !%rdi) (movq (imm 1) !%rdi) in
 
       match op with
       | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
@@ -198,42 +190,17 @@ let rec expr env e =
         (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
         | Tptr _ ->
           let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
-          let l_true = new_label () and l_end = new_label () in
-
-          ("%s",
-           [expr env e ++
-            cmpq (imm 0) !%rdi ++
-            jne l_true ++
-            movq (ilab nil_ptr) !%rdi ++
-            jmp l_end ++
-            label l_true ++
-            movq (ilab buffer) !%rdi ++
-            label l_end])
+          ("%s", [asm_if_else (expr env e) (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
 
         | Tint -> ("%ld", [expr env e])
 
         | Tbool ->
           let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
-          let l_true = new_label () and l_end = new_label () in
-
-          ("%s", [expr env e ++
-                  cmpq (imm 0) !%rdi ++
-                  jne l_true ++
-                  movq (ilab s_false) !%rdi ++
-                  jmp l_end ++
-                  label l_true ++
-                  movq (ilab s_true) !%rdi ++
-                  label l_end])
+          ("%s", [asm_if_else (expr env e) (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
 
         | Tstring ->
           let s_empty = alloc_constant "" in
-          let l_true = new_label () in
-
-          ("%s", [expr env e ++
-                  cmpq (imm 0) !%rdi ++
-                  jne l_true ++
-                  movq (ilab s_empty) !%rdi ++
-                  label l_true])
+          ("%s", [asm_if_else (expr env e) nop (movq (ilab s_empty) !%rdi)])
 
         | Tstruct s ->
           let var, typ = get_ident_from_dot e in
@@ -367,17 +334,7 @@ let rec expr env e =
     )
 
 
-  | TEif (e1, e2, e3) ->
-    let l_else = new_label () and l_end = new_label () in
-    expr env e1 ++
-    cmpq (imm 0) !%rdi ++
-    je l_else ++
-    expr env e2 ++
-    jmp l_end ++
-    label l_else ++
-    expr env e3 ++
-    label l_end
-
+  | TEif (e1, e2, e3) -> asm_if_else (expr env e1) (expr env e2) (expr env e3)
 
   | TEfor (e1, e2) ->
     (* TODO code pour for *) assert false
