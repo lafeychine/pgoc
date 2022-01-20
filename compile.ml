@@ -183,26 +183,33 @@ let rec expr env e =
     (* TODO code pour * *) assert false
 
   | TEprint el ->
+    (* TODO print for TEcall *)
+
     (* NOTE Génération du format pour printf *)
     let fmt_label, el =
       let rec create_fmt e =
+        let asm_expr =
+          match e.expr_desc with
+          | TEcall _ -> expr env e ++ popq rdi ++ addq (imm 8) !%rsp
+          | _ -> expr env e in
+
         match e.expr_typ with
         | Tnil -> ("<nil>", [])
 
         (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
         | Tptr _ ->
           let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
-          ("%s", [asm_if_else (expr env e) (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
+          ("%s", [asm_if_else asm_expr (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
 
-        | Tint -> ("%ld", [expr env e])
+        | Tint -> ("%ld", [asm_expr])
 
         | Tbool ->
           let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
-          ("%s", [asm_if_else (expr env e) (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
+          ("%s", [asm_if_else asm_expr (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
 
         | Tstring ->
           let s_empty = alloc_constant "" in
-          ("%s", [asm_if_else (expr env e) nop (movq (ilab s_empty) !%rdi)])
+          ("%s", [asm_if_else asm_expr nop (movq (ilab s_empty) !%rdi)])
 
         | Tstruct s ->
           let offset, var, typ = get_ident_from_dot e in
@@ -250,7 +257,6 @@ let rec expr env e =
       pushq (ilab fmt_label) ++
       call "print"
     )
-
 
   | TEident { v_id; v_typ } ->
     let offset = get_offset env v_id in
