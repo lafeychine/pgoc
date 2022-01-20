@@ -27,7 +27,7 @@ module Stack = struct
   let search = M.find_opt
 
   let size m =
-    let f _ (_, v) acc = acc + v
+    let f _ (size, _) acc = acc + size
     in M.fold f m 0
 
   let find f m =
@@ -38,7 +38,7 @@ module Stack = struct
 end
 
 type env = {
-  arguments: (int * int) Stack.M.t;
+  params: (int * int) Stack.M.t;
   locals: (int * int) Stack.M.t;
 }
 
@@ -102,7 +102,7 @@ let allocz ?(unstack=true) offset asm =
 
 (* NOTE Récupération de l'offset entre rbp et la variable *)
 let get_offset env id =
-  match Stack.search id env.arguments with
+  match Stack.search id env.params with
   | Some (_, offset) -> offset + context_bytes
   | None -> - (snd (Stack.get id env.locals))
 
@@ -327,7 +327,7 @@ let rec expr env e =
       let add_to_env (locals, offset) var =
         let size = sizeof var.v_typ in
         (Stack.add var.v_id (sizeof var.v_typ, offset + size) locals, offset + size)
-      in List.fold_left (List.fold_left add_to_env) (env.locals, 0) vars in
+      in List.fold_left (List.fold_left add_to_env) (env.locals, Stack.size env.locals) vars in
 
     (* TODO Unstack non-assign call return variables *)
 
@@ -379,7 +379,7 @@ let rec expr env e =
   | TEvars _ -> assert false
 
   | TEreturn el ->
-    let offset_rbp = Stack.size env.arguments + context_bytes in
+    let offset_rbp = Stack.size env.params + context_bytes in
     let toto (acc, offset) e =
       (acc ++
        expr env e ++
@@ -395,14 +395,14 @@ let rec expr env e =
 
 
 let function_ (f, e) =
-  let arguments, _ =
+  let params, _ =
     let add_to_stack (stack, offset) params =
       let size = sizeof params.v_typ in
       (Stack.add params.v_id (size, offset) stack, offset + size)
     in List.fold_left add_to_stack (Stack.create, 0) f.fn_params in
 
   let empty_env = {
-    arguments = arguments;
+    params = params;
     locals = Stack.create;
   } in
 
