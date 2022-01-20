@@ -390,8 +390,8 @@ let rec expr env e =
   | TEincdec (e, op) ->
     expr env e ++
     match op with
-    | Inc -> incq !%rsi
-    | Dec -> decq !%rsi
+    | Inc -> incq (ind rsi)
+    | Dec -> decq (ind rsi)
 
 
 let function_ (f, e) =
