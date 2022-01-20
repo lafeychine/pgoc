@@ -505,6 +505,16 @@ let phase1 structures = function
 
 
 (* 2. declare functions and type fields *)
+let rec sizeof = function
+  | Tvoid | Tnil -> 0
+
+  | Tint | Tbool | Tstring | Tptr _ -> 8
+
+  | Tstruct { s_fields } -> Seq.fold_left (fun acc { f_typ } -> acc + sizeof f_typ) 0 (Hashtbl.to_seq_values s_fields)
+
+  | Tmany typs -> List.fold_left (fun acc typ -> acc + sizeof typ) 0 typs
+
+
 let phase2 structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_params = pl; pf_typ = tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
@@ -565,23 +575,16 @@ let phase2 structures functions = function
                     (sprintf "undefined type %s of field %s in structure %s"
                        (get_ast_type_name type_field) id_field id) in
 
-      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 } in
+      (* NOTE Calcul de l'offset du champ *)
+      let offset = Hashtbl.fold (fun _ { f_typ } acc -> acc + sizeof f_typ) s_fields 0 in
+
+      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = offset } in
 
     List.iter process_struct_field fl;
     functions
 
 
 (* 3. type check function bodies *)
-let rec sizeof = function
-  | Tvoid | Tnil -> 0
-
-  | Tint | Tbool | Tstring | Tptr _ -> 8
-
-  | Tstruct { s_fields } -> Seq.fold_left (fun acc { f_typ } -> acc + sizeof f_typ) 0 (Hashtbl.to_seq_values s_fields)
-
-  | Tmany typs -> List.fold_left (fun acc typ -> acc + sizeof typ) 0 typs
-
-
 let decl structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
     let fn = Context.get id functions in
@@ -636,12 +639,6 @@ let decl structures functions = function
       | Some { f_name } ->
         error (Some loc) (sprintf "recursive field %s in the struct %s" f_name id)
       | None -> () );
-
-    (* NOTE Remplissage des offset de champs *)
-    ( let fill_field_offset _ field offset =
-        field.f_ofs <- offset;
-        offset + sizeof field.f_typ
-      in ignore (Hashtbl.fold fill_field_offset structure.s_fields 0) );
 
     TDstruct structure
 

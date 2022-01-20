@@ -106,6 +106,14 @@ let get_offset env id =
   | None -> - (snd (Stack.get id env.locals))
 
 
+(* NOTE Récupération du TEident d'un TEdot *)
+let rec get_ident_from_dot e =
+  match e.expr_desc with
+  | TEident var -> (var, e.expr_typ)
+  | TEdot (e, _) -> get_ident_from_dot e
+  | _ -> assert false
+
+
 let rec expr env e =
   match e.expr_desc with
   | TEskip -> nop
@@ -153,62 +161,86 @@ let rec expr env e =
     (* TODO code pour * *) assert false
 
   | TEprint el ->
-    let nb_args = List.length el + 1 in
-    let offset = max 0 (reg_max_args - nb_args) in
-
     (* NOTE Génération du format pour printf *)
     let fmt_label, el =
-      let rec create_fmt ((fmt_acc, prefix), expr_acc) e =
-        let asm_expr = expr env e in
-
+      let rec create_fmt e =
         match e.expr_typ with
-        | Tnil
-        | Tptr _ -> ((fmt_acc ^ prefix ^ "%p", " "), expr_acc @ [asm_expr])
+        | Tnil -> ("<nil>", [])
 
-        | Tint -> ((fmt_acc ^ prefix ^ "%ld", " "), expr_acc @ [asm_expr])
+        (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
+        | Tptr _ ->
+          let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
+          let l_true = new_label () and l_end = new_label () in
+
+          ("%s",
+           [expr env e ++
+            cmpq (imm 0) !%rdi ++
+            jne l_true ++
+            movq (ilab nil_ptr) !%rdi ++
+            jmp l_end ++
+            label l_true ++
+            movq (ilab buffer) !%rdi ++
+            label l_end])
+
+        | Tint -> ("%ld", [expr env e])
 
         | Tbool ->
           let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
           let l_true = new_label () and l_end = new_label () in
 
-          let asm_expr =
-            asm_expr ++
-            cmpq (imm 0) !%rdi ++
-            jne l_true ++
-            movq (ilab s_false) !%rdi ++
-            jmp l_end ++
-            label l_true ++
-            movq (ilab s_true) !%rdi ++
-            label l_end in
-
-          ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+          ("%s", [expr env e ++
+                  cmpq (imm 0) !%rdi ++
+                  jne l_true ++
+                  movq (ilab s_false) !%rdi ++
+                  jmp l_end ++
+                  label l_true ++
+                  movq (ilab s_true) !%rdi ++
+                  label l_end])
 
         | Tstring ->
           let s_empty = alloc_constant "" in
           let l_true = new_label () in
 
-          let asm_expr =
-            asm_expr ++
-            cmpq (imm 0) !%rdi ++
-            jne l_true ++
-            movq (ilab s_empty) !%rdi ++
-            label l_true in
-
-          ((fmt_acc ^ "%s", ""), expr_acc @ [asm_expr])
+          ("%s", [expr env e ++
+                  cmpq (imm 0) !%rdi ++
+                  jne l_true ++
+                  movq (ilab s_empty) !%rdi ++
+                  label l_true])
 
         | Tstruct s ->
-          let field = Hashtbl.find s.s_fields "x" in
-          let asm_expr = expr env { expr_desc = TEdot (e, field); expr_typ = field.f_typ } in
+          let var, typ = get_ident_from_dot e in
+          let ident = { expr_desc = TEident var; expr_typ = typ } in
+          let create_fmt_field field =
+            create_fmt { expr_desc = TEdot (ident, field); expr_typ = field.f_typ } in
 
-          ((fmt_acc ^ "{" ^ "}", " "), expr_acc @ [asm_expr])
+          let fmt, _, exprs =
+            let generate_fmt (fmt_acc, prefix, exprs) (fmt, expr) =
+              (fmt_acc ^ prefix ^ fmt, " ", exprs @ expr)
+            in
+            List.fold_left generate_fmt ("", "", [])
+              (List.map create_fmt_field
+                 (List.sort (fun { f_ofs = a } { f_ofs = b } -> a - b)
+                    (List.of_seq (Hashtbl.to_seq_values s.s_fields))))
+          in ("{" ^ fmt ^ "}", exprs)
 
         | Tvoid
         | Tmany _ -> assert false in
 
-      let (fmt, _), el = List.fold_left create_fmt (("", ""), []) el
-      in alloc_constant fmt, el in
+      let fmt, _, exprs =
+        let generate_fmt (fmt_acc, prefix, exprs) (fmt, expr) =
+          let generate_prefix = function
+            | " ", "%ld" | " ", "%p" | " ", "<nil>" -> " "
+            | _ -> ""
+          in (fmt_acc ^ generate_prefix (prefix, fmt) ^ fmt,
+              generate_prefix (" ", fmt),
+              exprs @ expr)
+        in List.fold_left generate_fmt ("", "", []) (List.map create_fmt el)
+      in alloc_constant fmt, exprs in
 
     (* NOTE Génération du code *)
+    let nb_args = List.length el + 1 in
+    let offset = max 0 (reg_max_args - nb_args) in
+
     let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
 
     stack_frame ~register:rbx (
@@ -252,13 +284,8 @@ let rec expr env e =
           | _ -> movq !%rdi (ind ~ofs:offset rbp) )
 
       | TEdot (e, { f_ofs }) ->
-        let offset =
-          let rec get_var_id { expr_desc } =
-            match expr_desc with
-            | TEident { v_id } -> v_id
-            | TEdot (e, _) -> get_var_id e
-            | _ -> assert false
-          in get_offset env (get_var_id e) in
+        let { v_id }, _ = get_ident_from_dot e in
+        let offset = get_offset env v_id in
 
         leaq (ind ~ofs:offset rbp) rax ++
         ( match typ with
@@ -347,13 +374,8 @@ let rec expr env e =
     )
 
   | TEdot (e, { f_ofs }) ->
-    let offset =
-      let rec get_var_id { expr_desc } =
-        match expr_desc with
-        | TEident { v_id } -> v_id
-        | TEdot (e, _) -> get_var_id e
-        | _ -> assert false
-      in get_offset env (get_var_id e) in
+    let { v_id }, _ = get_ident_from_dot e in
+    let offset = get_offset env v_id in
 
     movq (ind ~ofs:(offset + f_ofs) rbp) !%rdi
 

@@ -3,11 +3,12 @@ package main
 import "fmt"
 
 func main() {
-	x := 2
+	var x *int
 
-	fmt.Print(&x)
+	y := &x
+
+	fmt.Print(&y, &y, nil, &y)
 }
 
 /*
-<nil>
-*/
+ */
