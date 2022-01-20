@@ -128,29 +128,57 @@ let rec expr env e =
 
   | TEnil -> xorq (reg rdi) (reg rdi)
 
-  | TEbinop (Band, e1, e2) ->
-    (* TODO code pour ET logique lazy *) assert false
   | TEbinop (Bor, e1, e2) ->
-    (* TODO code pour OU logique lazy *) assert false
-  | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
-    (* TODO code pour comparaison ints *) assert false
+    let l_end = new_label () in
 
-  | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
-    let instruction =
+    expr env e1 ++
+    cmpq (imm 1) !%rdi ++
+    je l_end ++
+    expr env e2 ++
+    label l_end
+
+  | TEbinop (Band, e1, e2) ->
+    let l_end = new_label () in
+
+    expr env e1 ++
+    cmpq (imm 0) !%rdi ++
+    je l_end ++
+    expr env e2 ++
+    label l_end
+
+  | TEbinop (op, e1, e2) ->
+    let asm_binop =
+      let assembly_cmp instruction =
+        let l_true = new_label () and l_end = new_label () in
+
+        cmpq (ind rsp) !%rdi ++
+        instruction l_true ++
+        movq (imm 0) !%rdi ++
+        jmp l_end ++
+        label l_true ++
+        movq (imm 1) !%rdi ++
+        label l_end in
+
       match op with
       | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
       | Bsub -> movq !%rdi !%rax ++ movq (ind rsp) !%rdi ++ subq !%rax !%rdi
       | Bmul -> imulq (ind rsp) !%rdi (* NOTE Opération commutative *)
       | Bdiv -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
       | Bmod -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi
+      | Beq -> assembly_cmp je
+      | Bne -> assembly_cmp jne
+      | Blt -> assembly_cmp jg
+      | Ble -> assembly_cmp jge
+      | Bgt -> assembly_cmp jl
+      | Bge -> assembly_cmp jle
+      | Band | Bor -> assert false
+
     in expr env e1 ++
        pushq !%rdi ++
        expr env e2 ++
-       instruction ++
+       asm_binop ++
        addq (imm 8) !%rsp
 
-  | TEbinop (Beq | Bne as op, e1, e2) ->
-    (* TODO code pour egalite toute valeur *) assert false
   | TEunop (Uneg, e1) ->
     (* TODO code pour negation ints *) assert false
   | TEunop (Unot, e1) ->

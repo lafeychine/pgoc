@@ -201,7 +201,7 @@ and expr_desc structures functions env loc pexpr_desc =
       | Band | Bor ->
         check_type pexpr1 expr1 Tbool;
         check_type pexpr2 expr2 Tbool;
-        new_expr (TEbinop (op, expr1, expr2)) Tint, false
+        new_expr (TEbinop (op, expr1, expr2)) Tbool, false
 
       | Beq | Bne ->
         if not (eq_type expr1.expr_typ expr2.expr_typ) then
