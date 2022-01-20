@@ -505,16 +505,6 @@ let phase1 structures = function
 
 
 (* 2. declare functions and type fields *)
-let rec sizeof = function
-  | Tvoid | Tnil -> 0
-
-  | Tint | Tbool | Tstring | Tptr _ -> 8
-
-  | Tstruct { s_fields } -> Seq.fold_left (fun acc { f_typ } -> acc + sizeof f_typ) 0 (Hashtbl.to_seq_values s_fields)
-
-  | Tmany typs -> List.fold_left (fun acc typ -> acc + sizeof typ) 0 typs
-
-
 let phase2 structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_params = pl; pf_typ = tyl } ->
     (* NOTE Vérification de la fonction main sans paramètres et sans type de retour *)
@@ -563,7 +553,7 @@ let phase2 structures functions = function
   | PDstruct { ps_name = { id }; ps_fields = fl } ->
     let { s_fields } as structure = Context.get id structures in
 
-    let process_struct_field ({ id = id_field; loc = loc_field }, type_field) =
+    let struct_field ({ id = id_field; loc = loc_field }, type_field) =
       (* NOTE Vérification de l'unicité des champs de la structure *)
       if Hashtbl.mem s_fields id_field then
         error (Some loc_field) (sprintf "duplicate field %s in structure %s" id_field id);
@@ -575,16 +565,23 @@ let phase2 structures functions = function
                     (sprintf "undefined type %s of field %s in structure %s"
                        (get_ast_type_name type_field) id_field id) in
 
-      (* NOTE Calcul de l'offset du champ *)
-      let offset = Hashtbl.fold (fun _ { f_typ } acc -> acc + sizeof f_typ) s_fields 0 in
+      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = 0 } in
 
-      Hashtbl.add s_fields id_field { f_name = id_field; f_typ; f_ofs = offset } in
-
-    List.iter process_struct_field fl;
+    List.iter struct_field fl;
     functions
 
 
 (* 3. type check function bodies *)
+let rec sizeof = function
+  | Tvoid | Tnil -> 0
+
+  | Tint | Tbool | Tstring | Tptr _ -> 8
+
+  | Tstruct { s_fields } -> Seq.fold_left (fun acc { f_typ } -> acc + sizeof f_typ) 0 (Hashtbl.to_seq_values s_fields)
+
+  | Tmany typs -> List.fold_left (fun acc typ -> acc + sizeof typ) 0 typs
+
+
 let decl structures functions = function
   | PDfunction { pf_name = { id; loc }; pf_body = e; pf_typ = tyl } ->
     let fn = Context.get id functions in
@@ -621,8 +618,8 @@ let decl structures functions = function
 
     TDfunction (fn, e)
 
-  | PDstruct { ps_name = { id; loc } } ->
-    let structure = Context.get id structures in
+  | PDstruct { ps_name = { id; loc }; ps_fields = fl } ->
+    let { s_fields } as structure = Context.get id structures in
 
     (* NOTE Vérification des structures récursives *)
     ( let rec get_recursive_struct_field { s_fields } acc =
@@ -639,6 +636,12 @@ let decl structures functions = function
       | Some { f_name } ->
         error (Some loc) (sprintf "recursive field %s in the struct %s" f_name id)
       | None -> () );
+
+    (* NOTE Calcul de l'offset du champ *)
+    let struct_field_offset offset ({ id }, _) =
+      let field = Hashtbl.find s_fields id in
+      field.f_ofs <- offset; offset + sizeof field.f_typ
+    in ignore (List.fold_left struct_field_offset 0 fl);
 
     TDstruct structure
 

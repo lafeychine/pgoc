@@ -108,11 +108,13 @@ let get_offset env id =
 
 
 (* NOTE Récupération du TEident d'un TEdot *)
-let rec get_ident_from_dot e =
-  match e.expr_desc with
-  | TEident var -> (var, e.expr_typ)
-  | TEdot (e, _) -> get_ident_from_dot e
-  | _ -> assert false
+let get_ident_from_dot e =
+  let rec get_ident_from_dot e offset =
+    match e.expr_desc with
+    | TEident var -> (offset, var, e.expr_typ)
+    | TEdot (e, { f_ofs }) -> get_ident_from_dot e (offset + f_ofs)
+    | _ -> assert false
+  in get_ident_from_dot e 0
 
 
 (* NOTE Bloc assembleur if/else *)
@@ -203,15 +205,15 @@ let rec expr env e =
           ("%s", [asm_if_else (expr env e) nop (movq (ilab s_empty) !%rdi)])
 
         | Tstruct s ->
-          let var, typ = get_ident_from_dot e in
+          let offset, var, typ = get_ident_from_dot e in
           let ident = { expr_desc = TEident var; expr_typ = typ } in
           let create_fmt_field field =
+            let field = { field with f_ofs = field.f_ofs + offset } in
             create_fmt { expr_desc = TEdot (ident, field); expr_typ = field.f_typ } in
 
           let fmt, _, exprs =
             let generate_fmt (fmt_acc, prefix, exprs) (fmt, expr) =
-              (fmt_acc ^ prefix ^ fmt, " ", exprs @ expr)
-            in
+              (fmt_acc ^ prefix ^ fmt, " ", exprs @ expr) in
             List.fold_left generate_fmt ("", "", [])
               (List.map create_fmt_field
                  (List.sort (fun { f_ofs = a } { f_ofs = b } -> a - b)
@@ -225,6 +227,7 @@ let rec expr env e =
         let generate_fmt (fmt_acc, prefix, exprs) (fmt, expr) =
           let generate_prefix = function
             | " ", "%ld" | " ", "%p" | " ", "<nil>" -> " "
+            | " ", s when String.get s 0 == '{' -> " "
             | _ -> ""
           in (fmt_acc ^ generate_prefix (prefix, fmt) ^ fmt,
               generate_prefix (" ", fmt),
@@ -252,8 +255,9 @@ let rec expr env e =
   | TEident { v_id; v_typ } ->
     let offset = get_offset env v_id in
 
+    leaq (ind ~ofs:offset rbp) rsi ++
     ( match v_typ with
-      | Tstruct s -> leaq (ind ~ofs:offset rbp) rdi
+      | Tstruct s -> nop
       | _ -> movq (ind ~ofs:offset rbp) !%rdi )
 
   | TEassign (lvalues, rvalues) ->
@@ -279,13 +283,13 @@ let rec expr env e =
           | _ -> movq !%rdi (ind ~ofs:offset rbp) )
 
       | TEdot (e, { f_ofs }) ->
-        let { v_id }, _ = get_ident_from_dot e in
-        let offset = get_offset env v_id in
+        let offset, { v_id }, _ = get_ident_from_dot e in
+        let rbp_offset = get_offset env v_id in
 
-        leaq (ind ~ofs:offset rbp) rax ++
+        leaq (ind ~ofs:rbp_offset rbp) rax ++
         ( match typ with
           | Tstruct s -> nop
-          | _ -> movq !%rdi (ind ~ofs:f_ofs rax) )
+          | _ -> movq !%rdi (ind ~ofs:(offset + f_ofs) rax) )
 
     in pre ++ List.fold_left2 assign nop lvalues exprs ++ post
 
@@ -337,7 +341,14 @@ let rec expr env e =
   | TEif (e1, e2, e3) -> asm_if_else (expr env e1) (expr env e2) (expr env e3)
 
   | TEfor (e1, e2) ->
-    (* TODO code pour for *) assert false
+    let for_head = new_label () and for_cond = new_label () in
+
+    jmp for_cond ++
+    label for_head ++
+    expr env e2 ++
+    label for_cond ++
+    asm_if_else (expr env e1) (jmp for_head) (nop)
+
   | TEnew ty ->
     (* TODO code pour new S *) assert false
 
@@ -359,10 +370,10 @@ let rec expr env e =
     )
 
   | TEdot (e, { f_ofs }) ->
-    let { v_id }, _ = get_ident_from_dot e in
-    let offset = get_offset env v_id in
+    let offset, { v_id }, _ = get_ident_from_dot e in
+    let rbp_offset = get_offset env v_id in
 
-    movq (ind ~ofs:(offset + f_ofs) rbp) !%rdi
+    movq (ind ~ofs:(rbp_offset + offset + f_ofs) rbp) !%rdi
 
   (* NOTE Ne devrait jamais arriver: TEvars est traité dans TEblock *)
   | TEvars _ -> assert false
@@ -376,8 +387,11 @@ let rec expr env e =
 
     fst (List.fold_left toto (nop, 0) el)
 
-  | TEincdec (e1, op) ->
-    (* TODO code pour return e++, e-- *) assert false
+  | TEincdec (e, op) ->
+    expr env e ++
+    match op with
+    | Inc -> incq !%rsi
+    | Dec -> decq !%rsi
 
 
 let function_ (f, e) =
@@ -397,6 +411,7 @@ let function_ (f, e) =
   ret
 
 
+(* NOTE Fonction spécifique à print *)
 let print =
   label "print" ++
   List.fold_left (++) nop (List.map popq [r13; rdi; rsi; rdx; rcx; r8; r9]) ++
@@ -419,19 +434,10 @@ let file dl =
     let is_function = function
       | TDfunction (func, expr) -> Some (func, expr)
       | TDstruct _ -> None
-    in
+    in List.fold_left (++) nop (List.map function_ (List.filter_map is_function dl)) in
 
-    List.fold_left (++) nop
-      (List.map function_ (List.filter_map is_function dl)) in
+  (* NOTE Génération du code pour les constantes *)
+  let data = Hashtbl.fold (fun constant l d -> label l ++ string constant ++ d) constants nop in
 
-  (* TODO calcul offset champs *)
-  { text =
-      init_text ++
-      functions ++
-      print;
-    (* TODO print pour d'autres valeurs *)
-    (* TODO appel malloc de stdlib *)
-    data =
-      (Hashtbl.fold (fun constant l d -> label l ++ string constant ++ d) constants nop)
-  ;
-  }
+  (* NOTE Sortie du programme *)
+  { text = init_text ++ functions ++ print; data = data }
