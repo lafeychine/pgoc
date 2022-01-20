@@ -1,31 +1,3 @@
-(* étiquettes
-     F_function      entrée fonction
-     E_function      sortie fonction
-     L_xxx           sauts
-     S_xxx           chaîne
-
-   expression calculée avec la pile si besoin, résultat final dans %rdi
-
-   fonction : arguments sur la pile, résultat dans %rax ou sur la pile
-
-            res k
-            ...
-            res 1
-            arg n
-            ...
-            arg 1
-            adr. retour
-   rbp ---> ancien rbp
-            ...
-            var locales
-            ...
-            calculs
-   rsp ---> ...
-
-*)
-
-open Format
-open Ast
 open Tast
 open X86_64
 
@@ -86,14 +58,6 @@ let alloc_constant =
 
 let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
 
-let memset size register =
-  match size with
-  | 0 -> nop
-  | 8 -> movq (imm 0) (ind register)
-  | _ -> movq !%register !%rdi ++
-         movq (imm 0) !%rsi ++
-         movq (imm size) !%rdx ++
-         call "memset"
 
 let sizeof = Typing.sizeof
 
@@ -102,26 +66,37 @@ let new_label =
 
 
 (* NOTE Allocation d'une frame de stack *)
-let stack_frame ?(register=rbp) asm =
+let stack_frame ?(register=rbp) ?(align=true) asm =
   pushq !%register ++
   movq !%rsp !%register ++
+  ( if align then andq (imm (-16)) !%rsp else nop ) ++
   asm ++
   movq !%register !%rsp ++
   popq register
 
 
-(* NOTE Forcer l'alignement de la stack *)
-let align_stack = andq (imm (-16)) !%rsp
+(* NOTE Initialisation de la mémoire à 0 *)
+let memset size register =
+  match size with
+  | 0 -> nop
+  | 8 -> movq (imm 0) (ind register)
+  | _ -> movq !%register !%rdi ++
+         movq (imm 0) !%rsi ++
+         movq (imm size) !%rdx ++
+         stack_frame ( call "memset" )
 
 
 (* NOTE Déplacement de la pile, et initialisation à 0 *)
-let allocz offset asm =
+let allocz ?(unstack=true) offset asm =
   match offset with
   | 0 -> asm
   | _ -> subq (imm offset) !%rsp ++
          memset offset rsp ++
          asm ++
-         addq (imm offset) !%rsp
+         if unstack then
+           addq (imm offset) !%rsp
+         else
+           nop
 
 
 (* NOTE Récupération de l'offset entre rbp et la variable *)
@@ -237,8 +212,6 @@ let rec expr env e =
     let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
 
     stack_frame ~register:rbx (
-      align_stack ++
-
       ( if nb_args > 6 && nb_args mod 2 == 1 then
           subq (imm 8) !%rsp else nop ) ++
 
@@ -256,30 +229,44 @@ let rec expr env e =
       | Tstruct s -> leaq (ind ~ofs:offset rbp) rdi
       | _ -> movq (ind ~ofs:offset rbp) !%rdi )
 
-  | TEassign ([{ expr_desc = TEident { v_id; v_typ } }], [ expr_assign ]) ->
-    let offset = get_offset env v_id in
+  | TEassign (lvalues, rvalues) ->
+    let pre, exprs, post =
+      match rvalues with
+      | [{ expr_desc = TEcall ({ fn_typ }, _)} as call] ->
+        let offset, exprs =
+          let analyse_typ offset typ =
+            (offset + sizeof typ, (movq (ind ~ofs:offset rsp) !%rdi, typ))
+          in List.fold_left_map analyse_typ 0 (Typing.unfold_typ [ fn_typ ])
+        in (expr env call, exprs, addq (imm (sizeof fn_typ)) !%rsp)
 
-    expr env expr_assign ++
-    ( match v_typ with
-      | Tstruct s -> nop
-      | _ -> movq !%rdi (ind ~ofs:offset rbp) )
+      | _ -> (nop, List.map (fun e -> (expr env e, e.expr_typ)) rvalues, nop) in
 
-  | TEassign ([{ expr_desc = TEdot ( e, { f_ofs } )}], [ expr_assign ]) ->
-    let offset =
-      let rec get_var_id { expr_desc } =
-        match expr_desc with
-        | TEident { v_id } -> v_id
-        | TEdot (e, _) -> get_var_id e
-        | _ -> assert false
-      in get_offset env (get_var_id e) in
+    let assign acc lvalue (expr, typ) =
+      acc ++ expr ++
 
-    leaq (ind ~ofs:offset rbp) rdi ++
-    pushq !%rdi ++
-    expr env expr_assign ++
-    popq rax ++
-    ( match expr_assign.expr_typ with
-      | Tstruct s -> nop
-      | _ -> movq !%rdi (ind ~ofs:f_ofs rax) )
+      match lvalue.expr_desc with
+      | TEident { v_id } ->
+        let offset = get_offset env v_id in
+        ( match typ with
+          | Tstruct s -> nop
+          | _ -> movq !%rdi (ind ~ofs:offset rbp) )
+
+      | TEdot (e, { f_ofs }) ->
+        let offset =
+          let rec get_var_id { expr_desc } =
+            match expr_desc with
+            | TEident { v_id } -> v_id
+            | TEdot (e, _) -> get_var_id e
+            | _ -> assert false
+          in get_offset env (get_var_id e) in
+
+        leaq (ind ~ofs:offset rbp) rax ++
+        ( match typ with
+          | Tstruct s -> nop
+          | _ -> movq !%rdi (ind ~ofs:f_ofs rax) )
+
+    in pre ++ List.fold_left2 assign nop lvalues exprs ++ post
+
 
   | TEassign ([{ expr_desc = TEunop (Ustar, { expr_desc = TEident x }) }], [e]) ->
     (* let offset = (\* TODO *\) env.offset_stack - reg_bytes * (x.v_id - Option.get env.first_var_id) in *)
@@ -287,7 +274,6 @@ let rec expr env e =
     (* TODO *)
     assert false
 
-  | TEassign (_, _) -> assert false
 
   (* NOTE Rien à faire ici: Cas particulier d'assignation *)
   | TEblock [{ expr_desc = TEvars _ }; { expr_desc = TEcall _ }]
@@ -317,6 +303,8 @@ let rec expr env e =
         (Stack.add var.v_id (sizeof var.v_typ, offset + size) locals, offset + size)
       in List.fold_left (List.fold_left add_to_env) (env.locals, 0) vars in
 
+    (* TODO Unstack non-assign call return variables *)
+
     (* NOTE Génération du code *)
     allocz offset (
       List.fold_left (++) nop
@@ -325,7 +313,17 @@ let rec expr env e =
 
 
   | TEif (e1, e2, e3) ->
-    (* TODO code pour if *) assert false
+    let l_else = new_label () and l_end = new_label () in
+    expr env e1 ++
+    cmpq (imm 0) !%rdi ++
+    je l_else ++
+    expr env e2 ++
+    jmp l_end ++
+    label l_else ++
+    expr env e3 ++
+    label l_end
+
+
   | TEfor (e1, e2) ->
     (* TODO code pour for *) assert false
   | TEnew ty ->
@@ -333,19 +331,19 @@ let rec expr env e =
 
   | TEcall (f, el) ->
     (* NOTE Décalage afin d'acceuillir les résultats + arguments *)
-    let offset =
-      let sizeof_args =
-        List.fold_left (+) 0
-          (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params)
-      in sizeof f.fn_typ + sizeof_args in
+    let sizeof_args =
+      List.fold_left (+) 0
+        (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params) in
+    let offset = sizeof f.fn_typ + sizeof_args in
 
     (* NOTE Déplacement des arguments *)
     let push_into_stack e acc = acc ++ (expr env e) ++ pushq !%rdi in
 
     (* NOTE Génération du code *)
-    allocz offset (
+    allocz offset ~unstack:false (
       List.fold_right push_into_stack el nop ++
-      call ("F_" ^ f.fn_name)
+      call ("F_" ^ f.fn_name) ++
+      addq (imm sizeof_args) !%rsp
     )
 
   | TEdot (e, { f_ofs }) ->
@@ -362,15 +360,14 @@ let rec expr env e =
   (* NOTE Ne devrait jamais arriver: TEvars est traité dans TEblock *)
   | TEvars _ -> assert false
 
-  | TEreturn [] -> nop
+  | TEreturn el ->
+    let offset_rbp = Stack.size env.arguments + context_bytes in
+    let toto (acc, offset) e =
+      (acc ++
+       expr env e ++
+       movq !%rdi (ind ~ofs:(offset_rbp + offset) rbp), sizeof e.expr_typ) in
 
-  | TEreturn [e] ->
-    let sizeof_args = Stack.size env.arguments in
-
-    expr env e ++
-    movq !%rdi (ind ~ofs:(sizeof_args + context_bytes) rbp)
-
-  | TEreturn _ -> assert false
+    fst (List.fold_left toto (nop, 0) el)
 
   | TEincdec (e1, op) ->
     (* TODO code pour return e++, e-- *) assert false
@@ -389,7 +386,7 @@ let function_ (f, e) =
   } in
 
   label ("F_" ^ f.fn_name) ++
-  stack_frame (expr empty_env e) ++
+  stack_frame ~align:false (expr empty_env e) ++
   ret
 
 

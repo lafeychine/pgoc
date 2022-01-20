@@ -1,5 +1,4 @@
 open Ast
-open Lib
 open Printf
 open Tast
 
@@ -127,12 +126,15 @@ and check_unreachable_expr loc rt (_, expr_rt) =
 
 
 (* NOTE Dépliage du type Tmany *)
-let unfold_expr_typ expr_list =
-  let unfold acc { expr_typ } =
-    match expr_typ with
+let rec unfold_typ typs =
+  let unfold acc typ =
+    match typ with
     | Tmany typs -> acc @ typs
-    | _ -> acc @ [expr_typ]
-  in List.fold_left unfold [] expr_list
+    | _ -> acc @ [typ] in
+  List.fold_left unfold [] typs
+
+and unfold_expr_typ expr_list =
+  unfold_typ (List.map (fun {expr_typ} -> expr_typ) expr_list)
 
 
 (* NOTE Vérifie si un élément est une l-value *)
