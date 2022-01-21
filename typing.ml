@@ -108,7 +108,7 @@ let new_var =
   let id = ref (-1) in
   fun name loc typ used ->
     incr id;
-    { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used; v_addr = false }
+    { v_name = name; v_id = !id; v_loc = loc; v_typ = typ; v_used = used }
 
 let underscore_var = new_var "_" (Lexing.dummy_pos, Lexing.dummy_pos) Tvoid true
 let underscore_ident = { expr_desc = TEident (underscore_var); expr_typ = Tvoid }

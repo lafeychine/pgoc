@@ -183,59 +183,68 @@ let rec expr env e =
     (* TODO code pour negation ints *) assert false
   | TEunop (Unot, e1) ->
     (* TODO code pour negation bool *) assert false
-  | TEunop (Uamp, e1) ->
-    (* TODO code pour & *) assert false
-  | TEunop (Ustar, e1) ->
-    (* TODO code pour * *) assert false
 
+  | TEunop (Uamp, e1) -> expr env e1 ++ movq !%rsi !%rdi
+
+  | TEunop (Ustar, e1) -> expr env e1 ++ movq (ind rdi) !%rdi
+
+  (* TODO print for TEcall *)
   | TEprint el ->
-    (* TODO print for TEcall *)
+    (* NOTE Outils de génération du format *)
+    let rec create_fmt ?(recurse=true) e =
+      let create_fmt_structure s =
+        let offset, var, typ = get_ident_from_dot e in
+        let ident = { expr_desc = TEident var; expr_typ = typ } in
+        let create_fmt_field ({ f_ofs; f_typ } as field) =
+          let field = { field with f_ofs = f_ofs + offset } in
+          create_fmt ~recurse:false { expr_desc = TEdot (ident, field); expr_typ = f_typ } in
 
-    (* NOTE Génération du format pour printf *)
+        let fmt, _, exprs =
+          let generate_fmt (fmt_acc, prefix, exprs) (_, fmt, expr) =
+            (fmt_acc ^ prefix ^ fmt, " ", exprs @ expr) in
+          List.fold_left generate_fmt ("", "", [])
+            (List.map create_fmt_field
+               (List.sort (fun { f_ofs = a } { f_ofs = b } -> a - b)
+                  (List.of_seq (Hashtbl.to_seq_values s.s_fields)))) in
+        (fmt, exprs) in
+
+      let asm_expr =
+        match e.expr_desc with
+        | TEcall _ -> expr env e ++ popq rdi
+        | _ -> expr env e in
+
+      match e.expr_typ with
+      | Tstruct s ->
+        let fmt, exprs = create_fmt_structure s
+        in (true, "{" ^ fmt ^ "}", exprs)
+
+      | Tptr (Tstruct s) when recurse ->
+        let fmt, exprs = create_fmt_structure s
+        in (true, "&{" ^ fmt ^ "}", exprs)
+
+      | Tnil -> (true, "<nil>", [])
+
+      (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
+      | Tptr _ ->
+        let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
+        (true, "%s", [asm_if_else asm_expr (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
+
+      | Tint -> (true, "%ld", [asm_expr])
+
+      | Tbool ->
+        let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
+        (true, "%s", [asm_if_else asm_expr (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
+
+      | Tstring ->
+        let s_empty = alloc_constant "" in
+        (false, "%s", [asm_if_else asm_expr nop (movq (ilab s_empty) !%rdi)])
+
+      | Tvoid
+      | Tmany _ -> assert false in
+
+
+    (* NOTE Génération effective du format *)
     let fmt_label, el =
-      let rec create_fmt e =
-        let asm_expr =
-          match e.expr_desc with
-          | TEcall _ -> expr env e ++ popq rdi
-          | _ -> expr env e in
-
-        match e.expr_typ with
-        | Tnil -> (true, "<nil>", [])
-
-        (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
-        | Tptr _ ->
-          let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
-          (true, "%s", [asm_if_else asm_expr (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
-
-        | Tint -> (true, "%ld", [asm_expr])
-
-        | Tbool ->
-          let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
-          (true, "%s", [asm_if_else asm_expr (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
-
-        | Tstring ->
-          let s_empty = alloc_constant "" in
-          (false, "%s", [asm_if_else asm_expr nop (movq (ilab s_empty) !%rdi)])
-
-        | Tstruct s ->
-          let offset, var, typ = get_ident_from_dot e in
-          let ident = { expr_desc = TEident var; expr_typ = typ } in
-          let create_fmt_field field =
-            let field = { field with f_ofs = field.f_ofs + offset } in
-            create_fmt { expr_desc = TEdot (ident, field); expr_typ = field.f_typ } in
-
-          let fmt, _, exprs =
-            let generate_fmt (fmt_acc, prefix, exprs) (_, fmt, expr) =
-              (fmt_acc ^ prefix ^ fmt, " ", exprs @ expr) in
-            List.fold_left generate_fmt ("", "", [])
-              (List.map create_fmt_field
-                 (List.sort (fun { f_ofs = a } { f_ofs = b } -> a - b)
-                    (List.of_seq (Hashtbl.to_seq_values s.s_fields))))
-          in (true, "{" ^ fmt ^ "}", exprs)
-
-        | Tvoid
-        | Tmany _ -> assert false in
-
       let fmt, _, exprs =
         let generate_fmt (fmt_acc, prev_prefix, exprs) (has_prefix, fmt, expr) =
           let generate_prefix = function
@@ -272,7 +281,7 @@ let rec expr env e =
       | _ -> movq (ind ~ofs:offset rbp) !%rdi )
 
   | TEassign (lvalues, rvalues) ->
-    let pre, exprs, typs, post =
+    let pre, exprs, post =
       match rvalues with
       | [{ expr_desc = TEcall ({ fn_typ }, _)} as e] ->
         let typs = Typing.unfold_typ [ fn_typ ] in
@@ -280,50 +289,23 @@ let rec expr env e =
           List.fold_left_map (fun offset typ -> (offset + sizeof typ, offset)) 0 typs
         in (expr env e ++ movq !%rsp !%rsi,
             List.map (fun offset -> pushq (ind ~ofs:offset rsi)) offset_typs,
-            typs,
             addq (imm (sizeof fn_typ)) !%rsp)
 
-      | _ -> (nop,
-              List.map (fun e -> expr env e ++ pushq !%rdi) rvalues,
-              List.map (fun e -> e.expr_typ) rvalues,
-              nop) in
+      | _ -> (nop, List.map (fun e -> expr env e ++ pushq !%rdi) rvalues, nop) in
 
-    let assign lvalue typ =
+    let assign lvalue =
       match lvalue.expr_desc with
       | TEident { v_typ = Tvoid } -> popq rdi
 
-      | TEident { v_id } ->
-        let offset = get_offset env v_id in
-        ( match typ with
-          | Tstruct s -> nop
-          | _ -> popq rdi ++ movq !%rdi (ind ~ofs:offset rbp) )
-
-      | TEdot (e, { f_ofs }) ->
-        let offset, { v_id }, _ = get_ident_from_dot e in
-        let rbp_offset = get_offset env v_id in
-
-        leaq (ind ~ofs:rbp_offset rbp) rax ++
-        ( match typ with
-          | Tstruct s -> nop
-          | _ -> popq rdi ++ movq !%rdi (ind ~ofs:(offset + f_ofs) rax) )
+      | _ -> expr env lvalue ++
+             popq rdi ++
+             movq !%rdi (ind rsi)
 
     in pre ++
        List.fold_left (fun acc x -> x ++ acc) nop exprs ++
-       List.fold_left (++) nop (List.map2 assign lvalues typs) ++
+       List.fold_left (++) nop (List.map assign lvalues) ++
        post
 
-
-  | TEassign ([{ expr_desc = TEunop (Ustar, { expr_desc = TEident x }) }], [e]) ->
-    (* let offset = (\* TODO *\) env.offset_stack - reg_bytes * (x.v_id - Option.get env.first_var_id) in *)
-    (* expr env e *)
-    (* TODO *)
-    assert false
-
-
-  (* NOTE Rien à faire ici: Cas particulier d'assignation *)
-  | TEblock [{ expr_desc = TEvars _ }; { expr_desc = TEcall _ }]
-  | TEblock [{ expr_desc = TEvars _ }; { expr_desc = TEassign _ }] ->
-    nop
 
   | TEblock el ->
     (* NOTE Séparation entre variables et séquences *)
@@ -367,8 +349,11 @@ let rec expr env e =
     label for_cond ++
     asm_if_else (expr env e1) (jmp for_head) (nop)
 
-  | TEnew ty ->
-    (* TODO code pour new S *) assert false
+  | TEnew ty -> stack_frame (
+      movq (imm 1) !%rdi ++
+      movq (imm (sizeof ty)) !%rsi ++
+      call "calloc"
+    )
 
   | TEcall (f, el) ->
     (* NOTE Décalage afin d'acceuillir les résultats + arguments *)
@@ -387,10 +372,16 @@ let rec expr env e =
     )
 
   | TEdot (e, { f_ofs }) ->
-    let offset, { v_id }, _ = get_ident_from_dot e in
+    let offset, { v_id; v_typ }, _ = get_ident_from_dot e in
     let rbp_offset = get_offset env v_id in
 
-    movq (ind ~ofs:(rbp_offset + offset + f_ofs) rbp) !%rdi
+    ( match v_typ with
+      | Tptr _ -> movq (ind ~ofs:rbp_offset rbp) !%rdi ++
+                  leaq (ind ~ofs:(offset + f_ofs) rdi) rsi ++
+                  movq (ind ~ofs:(offset + f_ofs) rdi) !%rdi
+
+      | _ -> leaq (ind ~ofs:(rbp_offset + offset + f_ofs) rbp) rsi ++
+             movq (ind ~ofs:(rbp_offset + offset + f_ofs) rbp) !%rdi )
 
   (* NOTE Ne devrait jamais arriver: TEvars est traité dans TEblock *)
   | TEvars _ -> assert false

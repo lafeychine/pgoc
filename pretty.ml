@@ -203,12 +203,11 @@ and get_tast_field { f_name; f_typ; f_ofs } parent_id =
     ("f_typ", get_tast_typ f_typ)
   ]
 
-let get_tast_var { v_name; v_id; v_typ; v_used; v_addr } parent_id =
+let get_tast_var { v_name; v_id; v_typ; v_used } parent_id =
   create_node parent_id "var" [
     "v_name = \"" ^ v_name ^ "\"";
     "v_id = \"" ^ sprintf "%d" v_id ^ "\"";
     "v_used = \"" ^ sprintf "%b" v_used ^ "\"";
-    "v_addr = \"" ^ sprintf "%b" v_addr ^ "\"";
   ] [
     ("v_typ", get_tast_typ v_typ)
   ]
