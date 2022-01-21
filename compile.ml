@@ -200,22 +200,22 @@ let rec expr env e =
           | _ -> expr env e in
 
         match e.expr_typ with
-        | Tnil -> ("<nil>", [])
+        | Tnil -> (true, "<nil>", [])
 
         (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
         | Tptr _ ->
           let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
-          ("%s", [asm_if_else asm_expr (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
+          (true, "%s", [asm_if_else asm_expr (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
 
-        | Tint -> ("%ld", [asm_expr])
+        | Tint -> (true, "%ld", [asm_expr])
 
         | Tbool ->
           let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
-          ("%s", [asm_if_else asm_expr (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
+          (true, "%s", [asm_if_else asm_expr (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
 
         | Tstring ->
           let s_empty = alloc_constant "" in
-          ("%s", [asm_if_else asm_expr nop (movq (ilab s_empty) !%rdi)])
+          (false, "%s", [asm_if_else asm_expr nop (movq (ilab s_empty) !%rdi)])
 
         | Tstruct s ->
           let offset, var, typ = get_ident_from_dot e in
@@ -225,27 +225,26 @@ let rec expr env e =
             create_fmt { expr_desc = TEdot (ident, field); expr_typ = field.f_typ } in
 
           let fmt, _, exprs =
-            let generate_fmt (fmt_acc, prefix, exprs) (fmt, expr) =
+            let generate_fmt (fmt_acc, prefix, exprs) (_, fmt, expr) =
               (fmt_acc ^ prefix ^ fmt, " ", exprs @ expr) in
             List.fold_left generate_fmt ("", "", [])
               (List.map create_fmt_field
                  (List.sort (fun { f_ofs = a } { f_ofs = b } -> a - b)
                     (List.of_seq (Hashtbl.to_seq_values s.s_fields))))
-          in ("{" ^ fmt ^ "}", exprs)
+          in (true, "{" ^ fmt ^ "}", exprs)
 
         | Tvoid
         | Tmany _ -> assert false in
 
       let fmt, _, exprs =
-        let generate_fmt (fmt_acc, prefix, exprs) (fmt, expr) =
+        let generate_fmt (fmt_acc, prev_prefix, exprs) (has_prefix, fmt, expr) =
           let generate_prefix = function
-            | " ", "%ld" | " ", "%p" | " ", "<nil>" -> " "
-            | " ", s when String.get s 0 == '{' -> " "
+            | true, true -> " "
             | _ -> ""
-          in (fmt_acc ^ generate_prefix (prefix, fmt) ^ fmt,
-              generate_prefix (" ", fmt),
+          in (fmt_acc ^ generate_prefix (prev_prefix, has_prefix) ^ fmt,
+              has_prefix,
               exprs @ expr)
-        in List.fold_left generate_fmt ("", "", []) (List.map create_fmt el)
+        in List.fold_left generate_fmt ("", false, []) (List.map create_fmt el)
       in alloc_constant fmt, exprs in
 
     (* NOTE Génération du code *)
