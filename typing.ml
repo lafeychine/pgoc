@@ -389,7 +389,8 @@ and expr_desc structures functions env loc pexpr_desc =
       let tast_expr, rt = expr (current_env :: env) el in
       let current_env =
         let add_var_to_env current_env v =
-          if Context.elem v.v_name current_env then
+          if v = underscore_var then ()
+          else if Context.elem v.v_name current_env then
             error (Some v.v_loc)
               (sprintf "multiple declaration of %s" v.v_name);
           Context.add v.v_name v current_env in

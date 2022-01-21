@@ -40,6 +40,7 @@ end
 type env = {
   params: (int * int) Stack.M.t;
   locals: (int * int) Stack.M.t;
+  exit_label: string;
 }
 
 
@@ -67,7 +68,7 @@ let sizeof = Typing.sizeof
 
 
 (* NOTE Allocation d'une frame de stack *)
-let stack_frame ?(register=rbp) ?(align=true) asm =
+let rec stack_frame ?(register=rbp) ?(align=true) asm =
   pushq !%register ++
   movq !%rsp !%register ++
   ( if align then andq (imm (-16)) !%rsp else nop ) ++
@@ -151,14 +152,14 @@ let rec expr env e =
   | TEbinop (op, e1, e2) ->
     let asm_binop =
       let assembly_cmp jump =
-        asm_if_else ~cmp:(ind rsp) ~jump:jump nop (movq (imm 0) !%rdi) (movq (imm 1) !%rdi) in
+        asm_if_else ~cmp:!%rsi ~jump:jump nop (movq (imm 0) !%rdi) (movq (imm 1) !%rdi) in
 
       match op with
-      | Badd -> addq (ind rsp) !%rdi (* NOTE Opération commutative *)
-      | Bsub -> movq !%rdi !%rax ++ movq (ind rsp) !%rdi ++ subq !%rax !%rdi
-      | Bmul -> imulq (ind rsp) !%rdi (* NOTE Opération commutative *)
-      | Bdiv -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
-      | Bmod -> xorq !%rdx !%rdx ++ movq (ind rsp) !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi
+      | Badd -> addq !%rsi !%rdi (* NOTE Opération commutative *)
+      | Bsub -> movq !%rdi !%rax ++ movq !%rsi !%rdi ++ subq !%rax !%rdi
+      | Bmul -> imulq !%rsi !%rdi (* NOTE Opération commutative *)
+      | Bdiv -> xorq !%rdx !%rdx ++ movq !%rsi !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
+      | Bmod -> xorq !%rdx !%rdx ++ movq !%rsi !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi
       | Beq -> assembly_cmp je
       | Bne -> assembly_cmp jne
       | Blt -> assembly_cmp jg
@@ -167,11 +168,16 @@ let rec expr env e =
       | Bge -> assembly_cmp jle
       | Band | Bor -> assert false
 
-    in expr env e1 ++
-       pushq !%rdi ++
-       expr env e2 ++
-       asm_binop ++
-       addq (imm 8) !%rsp
+    in ( match e1.expr_desc with
+        | TEcall _ -> expr env e1
+        | _ -> expr env e1 ++ pushq !%rdi ) ++
+
+       ( match e2.expr_desc with
+         | TEcall _ -> expr env e2 ++ popq rdi
+         | _ -> expr env e2 ) ++
+
+       popq rsi ++
+       asm_binop
 
   | TEunop (Uneg, e1) ->
     (* TODO code pour negation ints *) assert false
@@ -190,7 +196,7 @@ let rec expr env e =
       let rec create_fmt e =
         let asm_expr =
           match e.expr_desc with
-          | TEcall _ -> expr env e ++ popq rdi ++ addq (imm 8) !%rsp
+          | TEcall _ -> expr env e ++ popq rdi
           | _ -> expr env e in
 
         match e.expr_typ with
@@ -246,7 +252,7 @@ let rec expr env e =
     let nb_args = List.length el + 1 in
     let offset = max 0 (reg_max_args - nb_args) in
 
-    let push_into_stack acc expr = expr ++ acc ++ pushq !%rdi in
+    let push_into_stack expr acc = acc ++ expr ++ pushq !%rdi in
 
     stack_frame ~register:rbx (
       ( if nb_args > 6 && nb_args mod 2 == 1 then
@@ -267,26 +273,31 @@ let rec expr env e =
       | _ -> movq (ind ~ofs:offset rbp) !%rdi )
 
   | TEassign (lvalues, rvalues) ->
-    let pre, exprs, post =
+    let pre, exprs, typs, post =
       match rvalues with
-      | [{ expr_desc = TEcall ({ fn_typ }, _)} as call] ->
-        let offset, exprs =
-          let analyse_typ offset typ =
-            (offset + sizeof typ, (movq (ind ~ofs:offset rsp) !%rdi, typ))
-          in List.fold_left_map analyse_typ 0 (Typing.unfold_typ [ fn_typ ])
-        in (expr env call, exprs, addq (imm (sizeof fn_typ)) !%rsp)
+      | [{ expr_desc = TEcall ({ fn_typ }, _)} as e] ->
+        let typs = Typing.unfold_typ [ fn_typ ] in
+        let _, offset_typs =
+          List.fold_left_map (fun offset typ -> (offset + sizeof typ, offset)) 0 typs
+        in (expr env e ++ movq !%rsp !%rsi,
+            List.map (fun offset -> pushq (ind ~ofs:offset rsi)) offset_typs,
+            typs,
+            addq (imm (sizeof fn_typ)) !%rsp)
 
-      | _ -> (nop, List.map (fun e -> (expr env e, e.expr_typ)) rvalues, nop) in
+      | _ -> (nop,
+              List.map (fun e -> expr env e ++ pushq !%rdi) rvalues,
+              List.map (fun e -> e.expr_typ) rvalues,
+              nop) in
 
-    let assign acc lvalue (expr, typ) =
-      acc ++ expr ++
-
+    let assign lvalue typ =
       match lvalue.expr_desc with
+      | TEident { v_typ = Tvoid } -> popq rdi
+
       | TEident { v_id } ->
         let offset = get_offset env v_id in
         ( match typ with
           | Tstruct s -> nop
-          | _ -> movq !%rdi (ind ~ofs:offset rbp) )
+          | _ -> popq rdi ++ movq !%rdi (ind ~ofs:offset rbp) )
 
       | TEdot (e, { f_ofs }) ->
         let offset, { v_id }, _ = get_ident_from_dot e in
@@ -295,9 +306,12 @@ let rec expr env e =
         leaq (ind ~ofs:rbp_offset rbp) rax ++
         ( match typ with
           | Tstruct s -> nop
-          | _ -> movq !%rdi (ind ~ofs:(offset + f_ofs) rax) )
+          | _ -> popq rdi ++ movq !%rdi (ind ~ofs:(offset + f_ofs) rax) )
 
-    in pre ++ List.fold_left2 assign nop lvalues exprs ++ post
+    in pre ++
+       List.fold_left (fun acc x -> x ++ acc) nop exprs ++
+       List.fold_left (++) nop (List.map2 assign lvalues typs) ++
+       post
 
 
   | TEassign ([{ expr_desc = TEunop (Ustar, { expr_desc = TEident x }) }], [e]) ->
@@ -343,7 +357,6 @@ let rec expr env e =
         (List.map (expr { env with locals = locals }) seq_exprs)
     )
 
-
   | TEif (e1, e2, e3) -> asm_if_else (expr env e1) (expr env e2) (expr env e3)
 
   | TEfor (e1, e2) ->
@@ -363,13 +376,12 @@ let rec expr env e =
     let sizeof_args =
       List.fold_left (+) 0
         (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params) in
-    let offset = sizeof f.fn_typ + sizeof_args in
 
     (* NOTE Déplacement des arguments *)
     let push_into_stack e acc = acc ++ (expr env e) ++ pushq !%rdi in
 
     (* NOTE Génération du code *)
-    allocz offset ~unstack:false (
+    allocz (sizeof f.fn_typ) ~unstack:false (
       List.fold_right push_into_stack el nop ++
       call ("F_" ^ f.fn_name) ++
       addq (imm sizeof_args) !%rsp
@@ -386,12 +398,13 @@ let rec expr env e =
 
   | TEreturn el ->
     let offset_rbp = Stack.size env.params + context_bytes in
-    let toto (acc, offset) e =
+    let return_args (acc, offset) e =
       (acc ++
        expr env e ++
        movq !%rdi (ind ~ofs:(offset_rbp + offset) rbp), sizeof e.expr_typ) in
 
-    fst (List.fold_left toto (nop, 0) el)
+    fst (List.fold_left return_args (nop, 0) el) ++
+    jmp env.exit_label
 
   | TEincdec (e, op) ->
     expr env e ++
@@ -410,20 +423,21 @@ let function_ (f, e) =
   let empty_env = {
     params = params;
     locals = Stack.create;
+    exit_label = new_label ();
   } in
 
   label ("F_" ^ f.fn_name) ++
-  stack_frame ~align:false (expr empty_env e) ++
+  stack_frame ~align:false (expr empty_env e ++ label empty_env.exit_label) ++
   ret
 
 
 (* NOTE Fonction spécifique à print *)
 let print =
   label "print" ++
-  List.fold_left (++) nop (List.map popq [r13; rdi; rsi; rdx; rcx; r8; r9]) ++
+  List.fold_left (++) nop (List.map popq [r12; rdi; rsi; rdx; rcx; r8; r9]) ++
   xorl !%eax !%eax ++
   call "printf" ++
-  pushq !%r13 ++
+  pushq !%r12 ++
   ret
 
 
