@@ -11,7 +11,21 @@ func fact(n int) int {
 
 func main() {
 	for n := 0; n <= 10; n++ {
-		fmt.Print(fact(n))
-		fmt.Print("\n")
+		fmt.Print(fact(n), "\n")
 	}
 }
+
+/*
+== Expected program output ==
+1
+1
+2
+6
+24
+120
+720
+5040
+40320
+362880
+3628800
+*/

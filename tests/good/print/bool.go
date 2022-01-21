@@ -8,5 +8,5 @@ func main() {
 
 /*
 == Expected program output ==
-falsetrue
+false true
 */

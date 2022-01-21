@@ -10,3 +10,8 @@ func main() {
 	x, y := foo(20)
 	fmt.Print(x+y+1, "\n")
 }
+
+/*
+== Expected program output ==
+42
+*/

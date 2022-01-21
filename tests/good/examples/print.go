@@ -18,3 +18,17 @@ func main() {
 	var p *int = nil
 	fmt.Print("a", p, "b\n")
 }
+
+/*
+== Expected program output ==
+ab
+true
+false
+1 2 3
+123
+123 45
+123 true5
+1s3
+<nil>
+a<nil>b
+*/
