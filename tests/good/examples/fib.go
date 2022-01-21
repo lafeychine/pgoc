@@ -12,7 +12,21 @@ func fib(n int) int {
 
 func main() {
 	for n := 0; n <= 10; n++ {
-		fmt.Print(fib(n))
-		fmt.Print("\n")
+		fmt.Print(fib(n), "\n")
 	}
 }
+
+/*
+== Expected program output ==
+0
+1
+1
+2
+3
+5
+8
+13
+21
+34
+55
+*/
