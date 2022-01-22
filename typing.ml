@@ -248,8 +248,14 @@ and expr_desc structures functions env loc pexpr_desc =
                       (get_tast_type_name expr.expr_typ))))
 
   | PEcall ({ id = "fmt.Print" }, args) ->
+    let expr_type env arg =
+      let e = expr_no_return env arg in
+      match e.expr_typ with
+      | Tvoid -> error (Some arg.pexpr_loc) "cannot print void type"
+      | _ -> e
+    in
     fmt_used := true;
-    new_stmt (TEprint (List.map (expr_no_return env) args)), false
+    new_stmt (TEprint (List.map (expr_type env) args)), false
 
   | PEcall ({ id = "new" }, [{ pexpr_desc = PEident { id; loc } }]) ->
     let typ =
