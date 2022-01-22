@@ -18,7 +18,6 @@ type function_ = {
 and structure = {
   s_name: string;
   s_fields: (string, field) Hashtbl.t;
-  (* TODO autres informations pour l'analyse semantique *)
 }
 
 and typ =
@@ -30,7 +29,6 @@ and typ =
   | Tstruct of structure
   | Tptr of typ
   | Tmany of typ list (* >= 2 *)
-(* TODO autres types pour l'analyse semantique *)
 
 and var = {
   v_name: string;
@@ -38,8 +36,6 @@ and var = {
   v_loc: Ast.location;
   v_typ: typ;
   mutable v_used: bool;
-  mutable v_addr: bool; (* usage de &x *)
-  (* TODO autres informations pour la production de code *)
 }
 
 and field = {

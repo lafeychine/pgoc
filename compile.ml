@@ -7,6 +7,8 @@ let reg_bytes = 8
 let reg_max_args = 6  (* RDI, RSI, RDX, RCX, R8, R9 *)
 let context_bytes = 16
 
+let sizeof = Typing.sizeof
+
 
 (* NOTE Redéfinition de label: Gain de lisibilité *)
 let label s = nop ++ label s
@@ -59,14 +61,6 @@ let alloc_constant =
       label
 
 
-
-let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
-
-
-let sizeof = Typing.sizeof
-
-
-
 (* NOTE Allocation d'une frame de stack *)
 let rec stack_frame ?(register=rbp) ?(align=true) asm =
   pushq !%register ++
@@ -106,16 +100,6 @@ let get_offset env id =
   match Stack.search id env.params with
   | Some (_, offset) -> offset + context_bytes
   | None -> - (snd (Stack.get id env.locals))
-
-
-(* NOTE Récupération du TEident d'un TEdot *)
-let get_ident_from_dot e =
-  let rec get_ident_from_dot e offset =
-    match e.expr_desc with
-    | TEident var -> (offset, var, e.expr_typ)
-    | TEdot (e, { f_ofs }) -> get_ident_from_dot e (offset + f_ofs)
-    | _ -> assert false
-  in get_ident_from_dot e 0
 
 
 (* NOTE Bloc assembleur if/else *)
@@ -193,6 +177,14 @@ let rec expr env e =
     (* NOTE Outils de génération du format *)
     let rec create_fmt ?(recurse=true) e =
       let create_fmt_structure s =
+        (* NOTE Récupération de TEident à partir de TEdot *)
+        let get_ident_from_dot e =
+          let rec get_ident_from_dot e offset =
+            match e.expr_desc with
+            | TEident var -> (offset, var, e.expr_typ)
+            | TEdot (e, { f_ofs }) -> get_ident_from_dot e (offset + f_ofs)
+            | _ -> assert false
+          in get_ident_from_dot e 0 in
         let offset, var, typ = get_ident_from_dot e in
         let ident = { expr_desc = TEident var; expr_typ = typ } in
         let create_fmt_field ({ f_ofs; f_typ } as field) =
@@ -297,6 +289,10 @@ let rec expr env e =
       match lvalue.expr_desc with
       | TEident { v_typ = Tvoid } -> popq rdi
 
+      | TEunop (Ustar, e) -> expr env e ++
+                             popq rsi ++
+                             movq !%rsi (ind rdi)
+
       | _ -> expr env lvalue ++
              popq rdi ++
              movq !%rdi (ind rsi)
@@ -372,7 +368,18 @@ let rec expr env e =
     )
 
   | TEdot (e, { f_ofs }) ->
-    let offset, { v_id; v_typ }, _ = get_ident_from_dot e in
+    let get_ident_from_dot e =
+      let rec get_ident_from_dot e offset =
+        match e.expr_desc with
+        | TEident var -> (offset, var)
+        | TEdot (e, { f_ofs; f_typ }) ->
+          ( match f_typ with
+            | Tptr _ -> get_ident_from_dot e (offset + f_ofs)
+            | _ -> get_ident_from_dot e (offset + f_ofs) )
+        | _ -> assert false
+      in get_ident_from_dot e 0 in
+
+    let offset, { v_id; v_typ } = get_ident_from_dot e in
     let rbp_offset = get_offset env v_id in
 
     ( match v_typ with

@@ -8,13 +8,19 @@ type T struct {
 
 func main() {
 	t := new(T)
-	fmt.Print(t.y)
-	fmt.Print("\n")
+	fmt.Print(t.y, "\n")
+
 	t.x = 1
 	p := &t.x
-	fmt.Print(*p)
-	fmt.Print("\n")
+	fmt.Print(*p, "\n")
+
 	*p = 2
-	fmt.Print(*p)
-	fmt.Print("\n")
+	fmt.Print(*p, "\n")
 }
+
+/*
+== Expected program output ==
+0
+1
+2
+*/
