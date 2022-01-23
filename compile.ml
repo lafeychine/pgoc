@@ -103,10 +103,9 @@ let get_offset env id =
 
 
 (* NOTE Bloc assembleur if/else *)
-let asm_if_else ?(cmp=imm 0) ?(jump=je) expr if_block else_block =
+let asm_if_else ?(cmp=imm 0) ?(jump=je) if_block else_block =
   let l_else = new_label () and l_end = new_label ()
-  in expr ++
-     cmpq cmp !%rdi ++
+  in cmpq cmp !%rdi ++
      jump l_else ++
      if_block ++
      jmp l_end ++
@@ -129,14 +128,14 @@ let rec expr env e =
 
   | TEnil -> xorq (reg rdi) (reg rdi)
 
-  | TEbinop (Bor, e1, e2) -> asm_if_else (expr env e1) nop (expr env e2)
+  | TEbinop (Bor, e1, e2) -> expr env e1 ++ asm_if_else nop (expr env e2)
 
-  | TEbinop (Band, e1, e2) -> asm_if_else (expr env e1) (expr env e2) nop
+  | TEbinop (Band, e1, e2) -> expr env e1 ++ asm_if_else (expr env e2) nop
 
   | TEbinop (op, e1, e2) ->
     let asm_binop =
       let assembly_cmp jump =
-        asm_if_else ~cmp:!%rsi ~jump:jump nop (movq (imm 0) !%rdi) (movq (imm 1) !%rdi) in
+        asm_if_else ~cmp:!%rsi ~jump:jump (movq (imm 0) !%rdi) (movq (imm 1) !%rdi) in
 
       match op with
       | Badd -> addq !%rsi !%rdi (* NOTE Opération commutative *)
@@ -163,10 +162,9 @@ let rec expr env e =
        popq rsi ++
        asm_binop
 
-  | TEunop (Uneg, e1) ->
-    (* TODO code pour negation ints *) assert false
-  | TEunop (Unot, e1) ->
-    (* TODO code pour negation bool *) assert false
+  | TEunop (Uneg, e1) -> expr env e1 ++ negq !%rdi
+
+  | TEunop (Unot, e1) -> expr env e1 ++ asm_if_else (movq (imm 0) !%rdi) (movq (imm 1) !%rdi)
 
   | TEunop (Uamp, e1) -> expr env e1 ++ movq !%rsi !%rdi
 
@@ -219,17 +217,17 @@ let rec expr env e =
       (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
       | Tptr _ ->
         let nil_ptr = alloc_constant "<nil>" in
-        (true, "%s", [asm_if_else asm_expr (movq (ilab nil_ptr) !%rdi) (movq (ilab nil_ptr) !%rdi)])
+        (true, "%s", [asm_expr ++ asm_if_else (movq (ilab nil_ptr) !%rdi) (movq (ilab nil_ptr) !%rdi)])
 
       | Tint -> (true, "%ld", [asm_expr])
 
       | Tbool ->
         let s_true = alloc_constant "true" and s_false = alloc_constant "false" in
-        (true, "%s", [asm_if_else asm_expr (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
+        (true, "%s", [asm_expr ++ asm_if_else (movq (ilab s_true) !%rdi) (movq (ilab s_false) !%rdi)])
 
       | Tstring ->
         let s_empty = alloc_constant "" in
-        (false, "%s", [asm_if_else asm_expr nop (movq (ilab s_empty) !%rdi)])
+        (false, "%s", [asm_expr ++ asm_if_else nop (movq (ilab s_empty) !%rdi)])
 
       | Tvoid
       | Tmany _ -> assert false in
@@ -343,7 +341,7 @@ let rec expr env e =
         (List.map (expr { env with locals = locals }) seq_exprs)
     )
 
-  | TEif (e1, e2, e3) -> asm_if_else (expr env e1) (expr env e2) (expr env e3)
+  | TEif (e1, e2, e3) -> expr env e1 ++ asm_if_else (expr env e2) (expr env e3)
 
   | TEfor (e1, e2) ->
     let for_head = new_label () and for_cond = new_label () in
@@ -352,7 +350,8 @@ let rec expr env e =
     label for_head ++
     expr env e2 ++
     label for_cond ++
-    asm_if_else (expr env e1) (jmp for_head) (nop)
+    expr env e1 ++
+    asm_if_else (jmp for_head) nop
 
   | TEnew ty -> stack_frame (
       movq (imm 1) !%rdi ++
