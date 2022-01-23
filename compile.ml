@@ -379,7 +379,19 @@ let rec expr env e =
         (List.map (fun { v_typ } -> sizeof v_typ) f.fn_params) in
 
     (* NOTE Déplacement des arguments *)
-    let push_into_stack e acc = acc ++ (expr env e) ++ pushq !%rdi in
+    let push_into_stack e acc =
+      acc ++
+      match e.expr_desc with
+      | TEident { v_typ = Tstruct _ as typ } ->
+        let size = sizeof typ in
+        expr env e ++
+        subq (imm size) !%rsp ++
+        movq !%rsp !%rdi ++
+        stack_frame (
+          movq (imm size) !%rdx ++
+          call "memcpy"
+        )
+      | _ -> expr env e ++ pushq !%rdi in
 
     (* NOTE Génération du code *)
     allocz (sizeof f.fn_typ) ~unstack:false (

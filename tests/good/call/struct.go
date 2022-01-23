@@ -8,7 +8,7 @@ type L struct {
 }
 
 func foo(l L) {
-	fmt.Print(l)
+	fmt.Print(l, "\n")
 }
 
 func main() {
