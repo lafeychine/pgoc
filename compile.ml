@@ -218,8 +218,8 @@ let rec expr env e =
 
       (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
       | Tptr _ ->
-        let nil_ptr = alloc_constant "<nil>" and buffer = alloc_constant "0xffffffffffffffff" in
-        (true, "%s", [asm_if_else asm_expr (movq (ilab buffer) !%rdi) (movq (ilab nil_ptr) !%rdi)])
+        let nil_ptr = alloc_constant "<nil>" in
+        (true, "%s", [asm_if_else asm_expr (movq (ilab nil_ptr) !%rdi) (movq (ilab nil_ptr) !%rdi)])
 
       | Tint -> (true, "%ld", [asm_expr])
 
@@ -249,20 +249,29 @@ let rec expr env e =
       in alloc_constant fmt, exprs in
 
     (* NOTE Génération du code *)
+    let reg_max_args = reg_max_args - 1 in
     let nb_args = List.length el + 1 in
     let offset = max 0 (reg_max_args - nb_args) in
 
     let push_into_stack expr acc = acc ++ expr ++ pushq !%rdi in
 
+    subq (imm 8) !%rsp ++
+    movq (imm 0) (ind rsp) ++
+    leaq (ind rsp) r13 ++
     stack_frame ~register:rbx (
-      ( if nb_args > 6 && nb_args mod 2 == 1 then
+      ( if nb_args > reg_max_args && nb_args mod 2 == 1 then
           subq (imm 8) !%rsp else nop ) ++
 
       subq (imm (reg_bytes * offset)) !%rsp ++
       List.fold_right push_into_stack el nop ++
       pushq (ilab fmt_label) ++
-      call "print"
-    )
+      call "print" ++
+      movq (ilab (alloc_constant "%s")) !%rdi ++
+      movq (ind r13) !%rsi ++
+      xorl !%eax !%eax ++
+      call "printf"
+    ) ++
+    addq (imm 8) !%rsp
 
   | TEident { v_id; v_typ } ->
     let offset = get_offset env v_id in
@@ -348,7 +357,8 @@ let rec expr env e =
   | TEnew ty -> stack_frame (
       movq (imm 1) !%rdi ++
       movq (imm (sizeof ty)) !%rsi ++
-      call "calloc"
+      call "calloc" ++
+      movq !%rax !%rdi
     )
 
   | TEcall (f, el) ->
@@ -369,26 +379,34 @@ let rec expr env e =
 
   | TEdot (e, { f_ofs }) ->
     let get_ident_from_dot e =
-      let rec get_ident_from_dot e offset =
+      let rec get_ident_from_dot e =
         match e.expr_desc with
-        | TEident var -> (offset, var)
+        | TEident var -> (nop, var)
+
         | TEdot (e, { f_ofs; f_typ }) ->
           ( match f_typ with
-            | Tptr _ -> get_ident_from_dot e (offset + f_ofs)
-            | _ -> get_ident_from_dot e (offset + f_ofs) )
-        | _ -> assert false
-      in get_ident_from_dot e 0 in
+            | Tptr _ ->
+              let asm_expr, ident = get_ident_from_dot e in
+              (addq (imm f_ofs) !%rdi ++ movq (ind rdi) !%rdi ++ asm_expr, ident)
+            | _ ->
+              let asm_expr, ident = get_ident_from_dot e in
+              (addq (imm f_ofs) !%rdi ++ asm_expr, ident)
+          )
 
-    let offset, { v_id; v_typ } = get_ident_from_dot e in
+        | _ -> assert false
+      in get_ident_from_dot e in
+
+    let asm_expr, { v_id; v_typ } = get_ident_from_dot e in
     let rbp_offset = get_offset env v_id in
 
+    leaq (ind ~ofs:rbp_offset rbp) rdi ++
     ( match v_typ with
-      | Tptr _ -> movq (ind ~ofs:rbp_offset rbp) !%rdi ++
-                  leaq (ind ~ofs:(offset + f_ofs) rdi) rsi ++
-                  movq (ind ~ofs:(offset + f_ofs) rdi) !%rdi
-
-      | _ -> leaq (ind ~ofs:(rbp_offset + offset + f_ofs) rbp) rsi ++
-             movq (ind ~ofs:(rbp_offset + offset + f_ofs) rbp) !%rdi )
+      | Tptr _ -> movq (ind rdi) !%rdi
+      | _ -> nop ) ++
+    asm_expr ++
+    addq (imm f_ofs) !%rdi ++
+    movq !%rdi !%rsi ++
+    movq (ind rdi) !%rdi
 
   (* NOTE Ne devrait jamais arriver: TEvars est traité dans TEblock *)
   | TEvars _ -> assert false
@@ -431,9 +449,10 @@ let function_ (f, e) =
 (* NOTE Fonction spécifique à print *)
 let print =
   label "print" ++
-  List.fold_left (++) nop (List.map popq [r12; rdi; rsi; rdx; rcx; r8; r9]) ++
+  List.fold_left (++) nop (List.map popq [r12; rsi; rdx; rcx; r8; r9]) ++
   xorl !%eax !%eax ++
-  call "printf" ++
+  movq !%r13 !%rdi ++
+  call "asprintf" ++
   pushq !%r12 ++
   ret
 
