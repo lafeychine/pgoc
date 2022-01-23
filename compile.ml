@@ -253,23 +253,25 @@ let rec expr env e =
 
     let push_into_stack expr acc = acc ++ expr ++ pushq !%rdi in
 
-    subq (imm 8) !%rsp ++
-    movq (imm 0) (ind rsp) ++
-    leaq (ind rsp) r13 ++
     stack_frame ~register:rbx (
-      ( if nb_args > reg_max_args && nb_args mod 2 == 1 then
+      (* NOTE Alignement, si nécessaire, de la stack *)
+      ( if nb_args > reg_max_args && nb_args mod 2 == 0 then
           subq (imm 8) !%rsp else nop ) ++
 
+      pushq (imm 0) ++
       subq (imm (reg_bytes * offset)) !%rsp ++
       List.fold_right push_into_stack el nop ++
+
+      (* NOTE Appel à asprintf *)
       pushq (ilab fmt_label) ++
+      leaq (ind ~ofs:(reg_bytes * (nb_args + offset)) rsp) rdi ++
       call "print" ++
-      movq (ilab (alloc_constant "%s")) !%rdi ++
-      movq (ind r13) !%rsi ++
+
+      (* NOTE Appel à printf *)
+      movq (ind ~ofs:(reg_bytes * (max 0 (nb_args + offset - reg_max_args))) rsp) !%rdi ++
       xorl !%eax !%eax ++
       call "printf"
-    ) ++
-    addq (imm 8) !%rsp
+    )
 
   | TEident { v_id; v_typ } ->
     let offset = get_offset env v_id in
@@ -450,7 +452,6 @@ let print =
   label "print" ++
   List.fold_left (++) nop (List.map popq [r12; rsi; rdx; rcx; r8; r9]) ++
   xorl !%eax !%eax ++
-  movq !%r13 !%rdi ++
   call "asprintf" ++
   pushq !%r12 ++
   ret
