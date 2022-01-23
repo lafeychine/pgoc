@@ -143,7 +143,7 @@ let rec expr env e =
       | Bmul -> imulq !%rsi !%rdi (* NOTE Opération commutative *)
       | Bdiv -> xorq !%rdx !%rdx ++ movq !%rsi !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
       | Bmod -> xorq !%rdx !%rdx ++ movq !%rsi !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi
-      | Beq -> assembly_cmp je
+      | Beq -> (* TODO *) assembly_cmp je
       | Bne -> assembly_cmp jne
       | Blt -> assembly_cmp jg
       | Ble -> assembly_cmp jge
@@ -170,7 +170,6 @@ let rec expr env e =
 
   | TEunop (Ustar, e1) -> expr env e1 ++ movq (ind rdi) !%rdi
 
-  (* TODO print for TEcall *)
   | TEprint el ->
     (* NOTE Outils de génération du format *)
     let rec create_fmt ?(recurse=true) e =
@@ -208,13 +207,14 @@ let rec expr env e =
         let fmt, exprs = create_fmt_structure s
         in (true, "{" ^ fmt ^ "}", exprs)
 
+      (* TODO Utiliser asprintf *)
       | Tptr (Tstruct s) when recurse ->
         let fmt, exprs = create_fmt_structure s
         in (true, "&{" ^ fmt ^ "}", exprs)
 
       | Tnil -> (true, "<nil>", [])
 
-      (* TODO: .data taille d'un pointeur afin de mettre <nil> *)
+      (* TODO Utiliser asprintf *)
       | Tptr _ ->
         let nil_ptr = alloc_constant "<nil>" in
         (true, "%s", [asm_expr ++ asm_if_else (movq (ilab nil_ptr) !%rdi) (movq (ilab nil_ptr) !%rdi)])
@@ -229,8 +229,10 @@ let rec expr env e =
         let s_empty = alloc_constant "" in
         (false, "%s", [asm_expr ++ asm_if_else nop (movq (ilab s_empty) !%rdi)])
 
-      | Tvoid
-      | Tmany _ -> assert false in
+      (* TODO Retour de fonction *)
+      | Tmany _ -> assert false
+
+      | Tvoid -> assert false in
 
 
     (* NOTE Génération effective du format *)
@@ -278,7 +280,7 @@ let rec expr env e =
 
     leaq (ind ~ofs:offset rbp) rsi ++
     ( match v_typ with
-      | Tstruct s -> nop
+      | Tstruct s -> movq !%rsi !%rdi
       | _ -> movq (ind ~ofs:offset rbp) !%rdi )
 
   | TEassign (lvalues, rvalues) ->
@@ -297,6 +299,14 @@ let rec expr env e =
     let assign lvalue =
       match lvalue.expr_desc with
       | TEident { v_typ = Tvoid } -> popq rdi
+
+      | TEident { v_typ = Tstruct _ as typ } ->
+        expr env lvalue ++
+        popq rsi ++
+        stack_frame (
+          movq (imm (sizeof typ)) !%rdx ++
+          call "memcpy"
+        )
 
       | TEunop (Ustar, e) -> expr env e ++
                              popq rsi ++
