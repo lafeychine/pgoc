@@ -143,7 +143,7 @@ let rec expr env e =
       | Bmul -> imulq !%rsi !%rdi (* NOTE Opération commutative *)
       | Bdiv -> xorq !%rdx !%rdx ++ movq !%rsi !%rax ++ idivq !%rdi ++ movq !%rax !%rdi
       | Bmod -> xorq !%rdx !%rdx ++ movq !%rsi !%rax ++ idivq !%rdi ++ movq !%rdx !%rdi
-      | Beq -> (* TODO *) assembly_cmp je
+      | Beq -> assembly_cmp je
       | Bne -> assembly_cmp jne
       | Blt -> assembly_cmp jg
       | Ble -> assembly_cmp jge
@@ -171,6 +171,8 @@ let rec expr env e =
   | TEunop (Ustar, e1) -> expr env e1 ++ movq (ind rdi) !%rdi
 
   | TEprint el ->
+    let reg_max_args = reg_max_args - 1 in
+
     (* NOTE Outils de génération du format *)
     let rec create_fmt ?(recurse=true) e =
       let create_fmt_structure s =
@@ -207,17 +209,27 @@ let rec expr env e =
         let fmt, exprs = create_fmt_structure s
         in (true, "{" ^ fmt ^ "}", exprs)
 
-      (* TODO Utiliser asprintf *)
+      (* WONTFIX Utiliser asprintf *)
       | Tptr (Tstruct s) when recurse ->
         let fmt, exprs = create_fmt_structure s
         in (true, "&{" ^ fmt ^ "}", exprs)
 
       | Tnil -> (true, "<nil>", [])
 
-      (* TODO Utiliser asprintf *)
       | Tptr _ ->
         let nil_ptr = alloc_constant "<nil>" in
-        (true, "%s", [asm_expr ++ asm_if_else (movq (ilab nil_ptr) !%rdi) (movq (ilab nil_ptr) !%rdi)])
+        let asm_ptr =
+          stack_frame (
+            pushq (imm 0) ++
+            subq (imm (reg_bytes * 3)) !%rsp ++
+            pushq !%rdi ++
+            pushq (ilab (alloc_constant "%p")) ++
+            leaq (ind ~ofs:24 rsp) rdi ++
+            call "print" ++
+            movq (ind ~ofs:(-16) rsp) !%rdi
+          )
+        in
+        (true, "%s", [asm_expr ++ asm_if_else asm_ptr (movq (ilab nil_ptr) !%rdi)])
 
       | Tint -> (true, "%ld", [asm_expr])
 
@@ -249,7 +261,6 @@ let rec expr env e =
       in alloc_constant fmt, exprs in
 
     (* NOTE Génération du code *)
-    let reg_max_args = reg_max_args - 1 in
     let nb_args = List.length el + 1 in
     let offset = max 0 (reg_max_args - nb_args) in
 
@@ -437,9 +448,18 @@ let rec expr env e =
   | TEreturn el ->
     let offset_rbp = Stack.size env.params + context_bytes in
     let return_args (acc, offset) e =
-      (acc ++
-       expr env e ++
-       movq !%rdi (ind ~ofs:(offset_rbp + offset) rbp), sizeof e.expr_typ) in
+      let asm =
+        acc ++
+        expr env e ++
+        ( match e.expr_desc with
+          | TEident { v_typ = Tstruct _ as typ } ->
+            leaq (ind ~ofs:(offset_rbp + offset) rbp) rdi ++
+            stack_frame (
+              movq (imm (sizeof typ)) !%rdx ++
+              call "memcpy"
+            )
+          | _ -> movq !%rdi (ind ~ofs:(offset_rbp + offset) rbp) )
+      in (asm, offset + sizeof e.expr_typ) in
 
     fst (List.fold_left return_args (nop, 0) el) ++
     jmp env.exit_label
