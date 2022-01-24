@@ -1,0 +1,6 @@
+---
+AllowShortFunctionsOnASingleLine: InlineOnly
+BasedOnStyle: LLVM
+BreakBeforeBraces: WebKit
+IndentWidth: 4
+...
