@@ -3,12 +3,12 @@ package main
 import "fmt"
 
 func main() {
-	var x int
+	x := 2
 
 	fmt.Print(x, "\n")
 }
 
 /*
 == Expected program output ==
-0
+2
 */

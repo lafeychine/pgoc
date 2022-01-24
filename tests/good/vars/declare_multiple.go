@@ -3,12 +3,12 @@ package main
 import "fmt"
 
 func main() {
-	var x int
+	var x, y int
 
-	fmt.Print(x, "\n")
+	fmt.Print(x, y, "\n")
 }
 
 /*
 == Expected program output ==
-0
+0 0
 */

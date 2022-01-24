@@ -356,8 +356,6 @@ let rec expr env e =
         (Stack.add var.v_id (sizeof var.v_typ, offset + size) locals, offset + size)
       in List.fold_left (List.fold_left add_to_env) (env.locals, Stack.size env.locals) vars in
 
-    (* TODO Unstack non-assign call return variables *)
-
     (* NOTE Génération du code *)
     allocz offset (
       List.fold_left (++) nop

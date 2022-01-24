@@ -9,7 +9,6 @@ $(NAME):
 
 test:		$(NAME)
 		./tests/launch.sh
-		
 
 export-%:
 		cp test.go ../tests/exec/$*.go
